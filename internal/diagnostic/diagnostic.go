@@ -20,6 +20,8 @@ type Report struct {
 	Container string
 	APT       string
 	OCI       string
+	NPM       string
+	Go        string
 	Docker    string
 	Git       string
 	Paths     map[string]string
@@ -31,12 +33,18 @@ func Status(ctx context.Context, c config.Config, runner service.Runner) Report 
 	if err != nil || state == "" {
 		state = "not created"
 	}
-	r := Report{Container: state, APT: "disabled", OCI: "disabled", Paths: map[string]string{"apt": c.APTDir(), "oci": c.OCIDir(), "git": c.GitDir()}}
+	r := Report{Container: state, APT: "disabled", OCI: "disabled", NPM: "disabled", Go: "disabled", Paths: map[string]string{"apt": c.APTDir(), "oci": c.OCIDir(), "git": c.GitDir(), "npm": c.NPMDir(), "go": c.GoDir()}}
 	if c.APT.Enabled {
 		r.APT = endpointHealth(c.APT.Port, "/")
 	}
 	if c.OCI.Enabled {
 		r.OCI = endpointHealth(c.OCI.Port, "/v2/")
+	}
+	if c.NPM.Enabled {
+		r.NPM = endpointHealth(c.NPM.Port, "/-/ping")
+	}
+	if c.Go.Enabled {
+		r.Go = endpointHealth(c.Go.Port, "/")
 	}
 	return r
 }
@@ -96,8 +104,8 @@ func writable(path string) error {
 }
 
 type Stats struct {
-	APTBytes, OCIBytes, GitBytes int64
-	GitMirrors                   int
+	APTBytes, OCIBytes, GitBytes, NPMBytes, GoBytes int64
+	GitMirrors                                      int
 }
 
 func CollectStats(c config.Config) (Stats, error) {
@@ -110,6 +118,14 @@ func CollectStats(c config.Config) (Stats, error) {
 		return Stats{}, err
 	}
 	gitBytes, err := directoryBytes(c.GitDir())
+	if err != nil {
+		return Stats{}, err
+	}
+	npm, err := directoryBytes(c.NPMDir())
+	if err != nil {
+		return Stats{}, err
+	}
+	goModules, err := directoryBytes(c.GoDir())
 	if err != nil {
 		return Stats{}, err
 	}
@@ -127,7 +143,7 @@ func CollectStats(c config.Config) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	return Stats{APTBytes: apt, OCIBytes: oci, GitBytes: gitBytes, GitMirrors: mirrors}, nil
+	return Stats{APTBytes: apt, OCIBytes: oci, GitBytes: gitBytes, NPMBytes: npm, GoBytes: goModules, GitMirrors: mirrors}, nil
 }
 
 func directoryBytes(root string) (int64, error) {

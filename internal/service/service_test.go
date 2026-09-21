@@ -43,6 +43,20 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	if len(compat) != 1 || compat[0] != "docker2s2" {
 		t.Fatalf("unexpected Docker compatibility configuration: %#v", httpConfig)
 	}
+	verdaccio, err := os.ReadFile(filepath.Join(c.NPMConfigDir(), "verdaccio.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(verdaccio), "https://registry.npmjs.org/") || !strings.Contains(string(verdaccio), fmt.Sprintf("0.0.0.0:%d", c.NPM.Port)) {
+		t.Fatalf("unexpected Verdaccio configuration:\n%s", verdaccio)
+	}
+	supervisor, err := os.ReadFile(filepath.Join(c.SupervisorConfigDir(), "swe-cache.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(supervisor), "ATHENS_STORAGE_TYPE=disk") || !strings.Contains(string(supervisor), fmt.Sprintf("ATHENS_PORT=:%d", c.Go.Port)) {
+		t.Fatalf("unexpected Athens configuration:\n%s", supervisor)
+	}
 }
 
 type fakeRunner struct {
@@ -80,7 +94,7 @@ func TestStartCreatesContainerWithPersistentMounts(t *testing.T) {
 		}
 	}
 	got := strings.Join(run.args, " ")
-	for _, want := range []string{c.APTDir(), c.OCIDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), fmt.Sprintf("127.0.0.1:%d:%d", c.APT.Port, c.APT.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.OCI.Port, c.OCI.Port), c.Image} {
+	for _, want := range []string{c.APTDir(), c.OCIDir(), c.NPMDir(), c.GoDir(), c.APTConfigDir(), c.OCIConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), fmt.Sprintf("127.0.0.1:%d:%d", c.APT.Port, c.APT.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.OCI.Port, c.OCI.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.NPM.Port, c.NPM.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.Go.Port, c.Go.Port), c.Image} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run arguments do not include %q: %s", want, got)
 		}

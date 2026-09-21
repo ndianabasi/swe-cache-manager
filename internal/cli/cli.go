@@ -15,7 +15,7 @@ import (
 	"github.com/ndianabasi/swe-cache-manager/internal/service"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 func Run(args []string, out, errOut io.Writer) int {
 	return runWithReadme(context.Background(), args, out, errOut, "")
@@ -118,8 +118,8 @@ func inspectCommand(command string, args []string, out, errOut io.Writer) int {
 		renderStatus(out, c, r)
 	case "doctor":
 		r := diagnostic.Doctor(ctx, c, service.CommandRunner{})
-		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\nzot: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI)
-		for _, name := range []string{"apt", "oci", "git"} {
+		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\nzot: %s\nverdaccio: %s\nathens: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI, r.NPM, r.Go)
+		for _, name := range []string{"apt", "oci", "git", "npm", "go"} {
 			fmt.Fprintf(out, "%s path: %s\n", name, r.Paths[name])
 		}
 		if r.Docker != "available" || r.Git != "available" {
@@ -131,7 +131,7 @@ func inspectCommand(command string, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "collect stats: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(out, "apt bytes: %d\noci bytes: %d\ngit bytes: %d\ngit mirrors: %d\n", stats.APTBytes, stats.OCIBytes, stats.GitBytes, stats.GitMirrors)
+		fmt.Fprintf(out, "apt bytes: %d\noci bytes: %d\ngit bytes: %d\nnpm bytes: %d\ngo bytes: %d\ngit mirrors: %d\n", stats.APTBytes, stats.OCIBytes, stats.GitBytes, stats.NPMBytes, stats.GoBytes, stats.GitMirrors)
 	}
 	return 0
 }
@@ -141,8 +141,8 @@ func gcCommand(args []string, out, errOut io.Writer) int {
 	if len(args) >= 2 && args[0] == "--root" {
 		root, args = args[1], args[2:]
 	}
-	if len(args) != 1 || (args[0] != "git" && args[0] != "apt" && args[0] != "oci" && args[0] != "--all") {
-		fmt.Fprintln(errOut, "usage: swe-cache gc [--root PATH] {apt|oci|git|--all}")
+	if len(args) != 1 || (args[0] != "git" && args[0] != "apt" && args[0] != "oci" && args[0] != "npm" && args[0] != "go" && args[0] != "--all") {
+		fmt.Fprintln(errOut, "usage: swe-cache gc [--root PATH] {apt|oci|git|npm|go|--all}")
 		return 2
 	}
 	c, err := loadConfig(root)
@@ -172,8 +172,8 @@ func gcCommand(args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintf(out, "repacked %d Git mirrors; no objects were pruned\n", count)
 	}
-	if args[0] == "apt" || args[0] == "oci" || args[0] == "--all" {
-		fmt.Fprintln(out, "APT and OCI retention are service-managed; no cache entries were deleted")
+	if args[0] == "apt" || args[0] == "oci" || args[0] == "npm" || args[0] == "go" || args[0] == "--all" {
+		fmt.Fprintln(out, "APT, OCI, npm, and Go retention are service-managed; no cache entries were deleted")
 	}
 	return 0
 }
@@ -293,7 +293,13 @@ func lifecycle(command string, args []string, out, errOut io.Writer) int {
 	if options.ociPortSet {
 		loaded.OCI.Port = options.ociPort
 	}
-	if command != "stop" && (options.aptPortSet || options.ociPortSet) {
+	if options.npmPortSet {
+		loaded.NPM.Port = options.npmPort
+	}
+	if options.goPortSet {
+		loaded.Go.Port = options.goPort
+	}
+	if command != "stop" && (options.aptPortSet || options.ociPortSet || options.npmPortSet || options.goPortSet) {
 		if err := loaded.Save(); err != nil {
 			fmt.Fprintf(errOut, "save configuration: %v\n", err)
 			return 1
@@ -318,9 +324,9 @@ func lifecycle(command string, args []string, out, errOut io.Writer) int {
 }
 
 type lifecycleFlags struct {
-	root                   string
-	aptPort, ociPort       int
-	aptPortSet, ociPortSet bool
+	root                                          string
+	aptPort, ociPort, npmPort, goPort             int
+	aptPortSet, ociPortSet, npmPortSet, goPortSet bool
 }
 
 func lifecycleOptions(args []string, errOut io.Writer) (lifecycleFlags, bool) {
@@ -350,6 +356,22 @@ func lifecycleOptions(args []string, errOut io.Writer) (lifecycleFlags, bool) {
 			}
 			result.ociPort = port
 			result.ociPortSet = true
+		case "--npm-port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid npm port %q\n", value)
+				return result, false
+			}
+			result.npmPort = port
+			result.npmPortSet = true
+		case "--go-port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid Go port %q\n", value)
+				return result, false
+			}
+			result.goPort = port
+			result.goPortSet = true
 		default:
 			fmt.Fprintf(errOut, "unknown option %q\n", args[0])
 			return result, false
@@ -420,6 +442,30 @@ func initConfig(args []string, out, errOut io.Writer) int {
 			}
 			c.OCI.Port = port
 			args = args[2:]
+		case "--npm-port":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--npm-port requires a port")
+				return 2
+			}
+			port, err := strconv.Atoi(args[1])
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid npm port %q\n", args[1])
+				return 2
+			}
+			c.NPM.Port = port
+			args = args[2:]
+		case "--go-port":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--go-port requires a port")
+				return 2
+			}
+			port, err := strconv.Atoi(args[1])
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid Go port %q\n", args[1])
+				return 2
+			}
+			c.Go.Port = port
+			args = args[2:]
 		default:
 			fmt.Fprintf(errOut, "unknown init option %q\n", args[0])
 			return 2
@@ -450,13 +496,13 @@ Global options:
   --version                           print the binary version
 
 Commands:
-  init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT]
+  init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
                                       create persistent layout and config
-  start | restart [--root PATH] [--apt-port PORT] [--oci-port PORT]
+  start | restart [--root PATH] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
                                       manage the disposable service container
   stop [--root PATH]                  stop the service container
   status | doctor | stats            inspect cache health and use
-  gc [apt|oci|git|--all]             perform safe maintenance
+  gc [apt|oci|git|npm|go|--all]      perform safe maintenance
   git clone [--commit SHA] URL DIR   clone through a host-side bare mirror
   oci warm IMAGE...                  prewarm Zot through Docker pulls
 
@@ -497,15 +543,15 @@ func commandUsage(args []string, out, errOut io.Writer) int {
 }
 
 func initUsage(out io.Writer) {
-	fmt.Fprint(out, `Usage: swe-cache init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT]
+	fmt.Fprint(out, `Usage: swe-cache init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
 
 Creates the persistent cache layout and configuration. If the selected service
 image is not local, init builds it from the build context embedded in this binary.
 
 Examples:
   swe-cache init
-  swe-cache init --root /srv/swe-cache --apt-port 3142 --oci-port 5500
-  swe-cache init --image registry.example/swe-cache-services:0.1.0
+  swe-cache init --root /srv/swe-cache --apt-port 3142 --oci-port 5500 --npm-port 4873 --go-port 3000
+  swe-cache init --image registry.example/swe-cache-services:0.3.0
 `)
 }
 
@@ -520,14 +566,14 @@ Example:
 `)
 		return
 	}
-	fmt.Fprintf(out, `Usage: swe-cache %s [--root PATH] [--apt-port PORT] [--oci-port PORT]
+	fmt.Fprintf(out, `Usage: swe-cache %s [--root PATH] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
 
 Starts or recreates the disposable service container. Explicit port flags are
 saved to the cache configuration for later starts.
 
 Examples:
   swe-cache %s
-  swe-cache %s --apt-port 3142 --oci-port 5510
+  swe-cache %s --apt-port 3142 --oci-port 5510 --npm-port 4873 --go-port 3000
 `, command, command, command)
 }
 
@@ -541,10 +587,10 @@ Examples:
 }
 
 func gcUsage(out io.Writer) {
-	fmt.Fprint(out, `Usage: swe-cache gc [--root PATH] {apt|oci|git|--all}
+	fmt.Fprint(out, `Usage: swe-cache gc [--root PATH] {apt|oci|git|npm|go|--all}
 
-Git maintenance repacks mirror objects without pruning them. APT and OCI cache
-retention is managed by their services and is not deleted by this command.
+Git maintenance repacks mirror objects without pruning them. APT, OCI, npm,
+and Go cache retention is managed by their services and is not deleted here.
 
 Examples:
   swe-cache gc git

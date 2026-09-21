@@ -23,7 +23,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if got.Root != c.Root || got.APT.Port != 43142 || got.OCI.Upstream != c.OCI.Upstream || got.OCI.TLSVerify != c.OCI.TLSVerify || got.OCI.ManifestCheckInterval != c.OCI.ManifestCheckInterval {
 		t.Fatalf("loaded %#v, want %#v", got, c)
 	}
-	for _, name := range []string{"apt", "zot", "git", "config", "logs"} {
+	for _, name := range []string{"apt", "zot", "git", "npm", "go", "config", "logs"} {
 		if _, err := os.Stat(filepath.Join(c.Root, name)); err != nil {
 			t.Errorf("%s was not created: %v", name, err)
 		}
@@ -54,7 +54,15 @@ func TestDefaultsUseAnAbsoluteRoot(t *testing.T) {
 
 func TestDefaultPorts(t *testing.T) {
 	c := Defaults()
-	if c.APT.Port != DefaultAPTPort || c.OCI.Port != DefaultOCIPort {
+	if c.APT.Port != DefaultAPTPort || c.OCI.Port != DefaultOCIPort || c.NPM.Port != DefaultNPMPort || c.Go.Port != DefaultGoPort {
 		t.Fatalf("unexpected default ports: %#v", c)
+	}
+}
+
+func TestRejectsDuplicateEnabledServicePorts(t *testing.T) {
+	c := Defaults()
+	c.NPM.Port = c.Go.Port
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected duplicate port validation error")
 	}
 }

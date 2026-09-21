@@ -22,16 +22,22 @@ func renderStatus(out io.Writer, c config.Config, report diagnostic.Report) {
 		{"Container", report.Container},
 		{"APT cache", report.APT},
 		{"OCI registry", report.OCI},
+		{"npm registry", report.NPM},
+		{"Go module proxy", report.Go},
 	})
 	renderStatusSection(out, "ENDPOINTS", []statusRow{
 		{"APT proxy", fmt.Sprintf("http://127.0.0.1:%d", c.APT.Port)},
 		{"OCI registry", fmt.Sprintf("http://127.0.0.1:%d", c.OCI.Port)},
+		{"npm registry", fmt.Sprintf("http://127.0.0.1:%d", c.NPM.Port)},
+		{"Go module proxy", fmt.Sprintf("http://127.0.0.1:%d", c.Go.Port)},
 	})
 	renderStatusSection(out, "PERSISTENT STORAGE", []statusRow{
 		{"Cache root", c.Root},
 		{"APT cache", report.Paths["apt"]},
 		{"OCI cache", report.Paths["oci"]},
 		{"Git mirrors", report.Paths["git"]},
+		{"npm cache", report.Paths["npm"]},
+		{"Go modules", report.Paths["go"]},
 	})
 	renderStatusSection(out, "RUNTIME", []statusRow{
 		{"CLI version", Version},

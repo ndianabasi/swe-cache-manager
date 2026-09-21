@@ -191,6 +191,8 @@ func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tls
 	})
 	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/", c.APT.Port))
 	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/v2/", c.OCI.Port))
+	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/-/ping", c.NPM.Port))
+	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/", c.Go.Port))
 	return manager
 }
 

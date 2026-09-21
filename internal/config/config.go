@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.2.0"
+	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.3.0"
 	DefaultAPTPort = 3142 // apt-cacher-ng's established default
 	DefaultOCIPort = 5500 // intentionally avoids the commonly occupied 5000
+	DefaultNPMPort = 4873 // Verdaccio's established default
+	DefaultGoPort  = 3000 // Athens' established default
 )
 
 // Config is deliberately a small, stable top-level configuration. The cache
@@ -27,6 +29,8 @@ type Config struct {
 	APT         APTConfig
 	OCI         OCIConfig
 	Git         GitConfig
+	NPM         NPMConfig
+	Go          GoConfig
 	Maintenance MaintenanceConfig
 }
 
@@ -46,6 +50,14 @@ type OCIConfig struct {
 	TLSCertDir string
 }
 type GitConfig struct{ Enabled bool }
+type NPMConfig struct {
+	Enabled bool
+	Port    int
+}
+type GoConfig struct {
+	Enabled bool
+	Port    int
+}
 type MaintenanceConfig struct{ Enabled bool }
 
 func Defaults() Config {
@@ -57,7 +69,7 @@ func Defaults() Config {
 	if image == "" {
 		image = DefaultImage
 	}
-	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true, ManifestCheckInterval: "1h"}, Git: GitConfig{Enabled: true}}
+	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true, ManifestCheckInterval: "1h"}, Git: GitConfig{Enabled: true}, NPM: NPMConfig{Enabled: true, Port: DefaultNPMPort}, Go: GoConfig{Enabled: true, Port: DefaultGoPort}}
 }
 
 // defaultRoot selects a writable, OS-native location for user installs while
@@ -92,12 +104,15 @@ func (c Config) APTConfigDir() string {
 	return filepath.Join(c.ConfigDir(), "apt-cacher-ng")
 }
 func (c Config) OCIConfigDir() string { return filepath.Join(c.ConfigDir(), "zot") }
+func (c Config) NPMConfigDir() string { return filepath.Join(c.ConfigDir(), "npm") }
 func (c Config) SupervisorConfigDir() string {
 	return filepath.Join(c.ConfigDir(), "supervisor")
 }
 func (c Config) APTDir() string { return filepath.Join(c.Root, "apt") }
 func (c Config) OCIDir() string { return filepath.Join(c.Root, "zot") }
 func (c Config) GitDir() string { return filepath.Join(c.Root, "git") }
+func (c Config) NPMDir() string { return filepath.Join(c.Root, "npm") }
+func (c Config) GoDir() string  { return filepath.Join(c.Root, "go") }
 func (c Config) LogDir() string { return filepath.Join(c.Root, "logs") }
 func (c Config) Path() string   { return filepath.Join(c.ConfigDir(), "swe-cache.toml") }
 
@@ -120,13 +135,25 @@ func (c Config) Validate() error {
 			return fmt.Errorf("OCI manifest check interval must be a positive duration: %q", c.OCI.ManifestCheckInterval)
 		}
 	}
-	for name, port := range map[string]int{"apt": c.APT.Port, "oci": c.OCI.Port} {
+	ports := map[string]struct {
+		enabled bool
+		port    int
+	}{
+		"apt": {c.APT.Enabled, c.APT.Port}, "oci": {c.OCI.Enabled, c.OCI.Port},
+		"npm": {c.NPM.Enabled, c.NPM.Port}, "go": {c.Go.Enabled, c.Go.Port},
+	}
+	usedPorts := map[int]string{}
+	for name, candidate := range ports {
+		port := candidate.port
 		if port < 1 || port > 65535 {
 			return fmt.Errorf("%s port must be between 1 and 65535", name)
 		}
-	}
-	if c.APT.Enabled && c.OCI.Enabled && c.APT.Port == c.OCI.Port {
-		return errors.New("apt and oci ports must differ")
+		if candidate.enabled {
+			if previous, exists := usedPorts[port]; exists {
+				return fmt.Errorf("%s and %s ports must differ", previous, name)
+			}
+			usedPorts[port] = name
+		}
 	}
 	return nil
 }
@@ -137,7 +164,7 @@ func (c Config) EnsureLayout() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	for _, dir := range []string{c.Root, c.APTDir(), c.OCIDir(), c.GitDir(), c.ConfigDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), c.LogDir()} {
+	for _, dir := range []string{c.Root, c.APTDir(), c.OCIDir(), c.GitDir(), c.NPMDir(), c.GoDir(), c.ConfigDir(), c.APTConfigDir(), c.OCIConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), c.LogDir()} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
@@ -217,6 +244,14 @@ func set(c *Config, section, key, value string) error {
 		c.OCI.ManifestCheckInterval = value
 	case "git.enabled":
 		return boolValue(&c.Git.Enabled)
+	case "npm.enabled":
+		return boolValue(&c.NPM.Enabled)
+	case "npm.port":
+		return portValue(&c.NPM.Port)
+	case "go.enabled":
+		return boolValue(&c.Go.Enabled)
+	case "go.port":
+		return portValue(&c.Go.Port)
 	case "maintenance.enabled":
 		return boolValue(&c.Maintenance.Enabled)
 	default:
@@ -229,6 +264,6 @@ func (c Config) Save() error {
 	if err := c.EnsureLayout(); err != nil {
 		return err
 	}
-	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\nmanifest_check_interval = %q\n\n[git]\nenabled = %t\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.OCI.ManifestCheckInterval, c.Git.Enabled, c.Maintenance.Enabled)
+	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\nmanifest_check_interval = %q\n\n[git]\nenabled = %t\n\n[npm]\nenabled = %t\nport = %d\n\n[go]\nenabled = %t\nport = %d\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.OCI.ManifestCheckInterval, c.Git.Enabled, c.NPM.Enabled, c.NPM.Port, c.Go.Enabled, c.Go.Port, c.Maintenance.Enabled)
 	return os.WriteFile(c.Path(), []byte(data), 0640)
 }

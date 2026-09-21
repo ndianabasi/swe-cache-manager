@@ -108,13 +108,51 @@ func (m Manager) GenerateRuntimeConfig() error {
 	if err := os.WriteFile(filepath.Join(m.Config.OCIConfigDir(), "zot.json"), append(zot, '\n'), 0640); err != nil {
 		return err
 	}
-	supervisor := `[supervisord]
+	npm := fmt.Sprintf(`storage: /var/lib/verdaccio
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+packages:
+  "@*/*":
+    access: $all
+    publish: $all
+    unpublish: false
+    proxy: npmjs
+  "**":
+    access: $all
+    publish: $all
+    unpublish: false
+    proxy: npmjs
+logs:
+  - {type: stdout, format: pretty, level: warn}
+listen: 0.0.0.0:%d
+`, m.Config.NPM.Port)
+	if err := os.WriteFile(filepath.Join(m.Config.NPMConfigDir(), "verdaccio.yaml"), []byte(npm), 0640); err != nil {
+		return err
+	}
+	supervisor := fmt.Sprintf(`[supervisord]
 nodaemon=true
 logfile=/var/log/supervisor/supervisord.log
 pidfile=/tmp/supervisord.pid
 
 [program:apt-cacher-ng]
 command=/usr/sbin/apt-cacher-ng -c /etc/apt-cacher-ng ForeGround=1
+autorestart=true
+startretries=3
+stdout_logfile=/dev/fd/1
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:verdaccio]
+command=/usr/local/bin/verdaccio --config /etc/swe-cache/npm/verdaccio.yaml
+autorestart=true
+startretries=3
+stdout_logfile=/dev/fd/1
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:athens]
+command=/bin/sh -ec 'export ATHENS_STORAGE_TYPE=disk ATHENS_DISK_STORAGE_ROOT=/var/lib/athens ATHENS_PORT=:%d ATHENS_GO_BINARY_ENV_VARS="GOPROXY=https://proxy.golang.org,direct" ATHENS_LOG_LEVEL=warn; exec /usr/local/bin/athens-proxy'
 autorestart=true
 startretries=3
 stdout_logfile=/dev/fd/1
@@ -128,7 +166,7 @@ startretries=3
 stdout_logfile=/dev/fd/1
 stdout_logfile_maxbytes=0
 redirect_stderr=true
-`
+`, m.Config.Go.Port)
 	return os.WriteFile(filepath.Join(m.Config.SupervisorConfigDir(), "swe-cache.conf"), []byte(supervisor), 0640)
 }
 
@@ -164,11 +202,20 @@ func (m Manager) Start(ctx context.Context) error {
 	if m.Config.OCI.Enabled {
 		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.OCI.Port, m.Config.OCI.Port))
 	}
+	if m.Config.NPM.Enabled {
+		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.NPM.Port, m.Config.NPM.Port))
+	}
+	if m.Config.Go.Enabled {
+		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.Go.Port, m.Config.Go.Port))
+	}
 	args = append(args,
 		"--mount", "type=bind,src="+m.Config.APTDir()+",dst=/var/cache/apt-cacher-ng",
 		"--mount", "type=bind,src="+m.Config.OCIDir()+",dst=/var/lib/zot",
+		"--mount", "type=bind,src="+m.Config.NPMDir()+",dst=/var/lib/verdaccio",
+		"--mount", "type=bind,src="+m.Config.GoDir()+",dst=/var/lib/athens",
 		"--mount", "type=bind,src="+m.Config.APTConfigDir()+",dst=/etc/apt-cacher-ng,readonly",
 		"--mount", "type=bind,src="+m.Config.OCIConfigDir()+",dst=/etc/swe-cache,readonly",
+		"--mount", "type=bind,src="+m.Config.NPMConfigDir()+",dst=/etc/swe-cache/npm,readonly",
 		"--mount", "type=bind,src="+m.Config.SupervisorConfigDir()+",dst=/etc/supervisor/conf.d,readonly",
 		"--mount", "type=bind,src="+m.Config.LogDir()+",dst=/var/log/swe-cache",
 		m.Config.Image,
