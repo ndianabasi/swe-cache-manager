@@ -136,10 +136,8 @@ func (m Manager) Start(ctx context.Context) error {
 		_, err = r.Run(ctx, "docker", "start", m.containerName())
 		return err
 	}
-	if _, err := r.Run(ctx, "docker", "image", "inspect", m.Config.Image); err != nil {
-		if _, pullErr := r.Run(ctx, "docker", "pull", m.Config.Image); pullErr != nil {
-			return fmt.Errorf("obtain service image %s: %w", m.Config.Image, pullErr)
-		}
+	if err := m.EnsureImage(ctx); err != nil {
+		return err
 	}
 	args := []string{"run", "--detach", "--name", m.containerName(), "--restart", "unless-stopped", "--label", "io.swe-cache.managed=true"}
 	if runtime.GOOS == "linux" {

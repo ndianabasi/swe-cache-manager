@@ -96,3 +96,51 @@ func TestStartIsIdempotentWhenRunning(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureImageBuildsOnlyWhenMissing(t *testing.T) {
+	c := config.Defaults()
+	c.Root = t.TempDir()
+	f := &fakeRunner{responses: map[string]string{}}
+	if err := (Manager{Config: c, Runner: f}).EnsureImage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	joined := ""
+	for _, item := range f.calls {
+		joined += item.name + " " + strings.Join(item.args, " ") + "\n"
+	}
+	if !strings.Contains(joined, "docker build --build-arg TARGETARCH=") || !strings.Contains(joined, "--tag "+c.Image) {
+		t.Fatalf("missing image build command:\n%s", joined)
+	}
+}
+
+func TestEnsureImageDoesNotRebuildExistingTag(t *testing.T) {
+	c := config.Defaults()
+	c.Root = t.TempDir()
+	f := &fakeRunner{responses: map[string]string{"docker image inspect " + c.Image: "existing"}}
+	if err := (Manager{Config: c, Runner: f}).EnsureImage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range f.calls {
+		if len(item.args) > 0 && item.args[0] == "build" {
+			t.Fatal("rebuilt existing image")
+		}
+	}
+}
+
+func TestEmbeddedBuildContextMatchesDevelopmentFiles(t *testing.T) {
+	for embedded, source := range map[string]string{
+		"assets/Dockerfile": "../../services/Dockerfile", "assets/supervisord.conf": "../../services/supervisord.conf",
+	} {
+		got, err := os.ReadFile(embedded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("embedded %s differs from %s", embedded, source)
+		}
+	}
+}

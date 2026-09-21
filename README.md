@@ -43,9 +43,6 @@ Docker (for example, through Docker's `docker` group).
 go test ./...
 mkdir -p bin
 go build -o ./bin/swe-cache ./cmd/swe-cache
-docker build --build-arg TARGETARCH="$(go env GOARCH)" \
-  -t ghcr.io/ndianabasi/swe-cache-services:0.1.0 \
-  -f services/Dockerfile services
 
 ./bin/swe-cache init
 ./bin/swe-cache start
@@ -70,9 +67,6 @@ Macs.
 go test ./...
 mkdir -p bin
 go build -o ./bin/swe-cache ./cmd/swe-cache
-docker build --build-arg TARGETARCH="$(go env GOARCH)" \
-  -t ghcr.io/ndianabasi/swe-cache-services:0.1.0 \
-  -f services/Dockerfile services
 
 ./bin/swe-cache init
 ./bin/swe-cache start
@@ -96,9 +90,6 @@ repository root:
 go test ./...
 New-Item -ItemType Directory -Force .\bin | Out-Null
 go build -o .\bin\swe-cache.exe .\cmd\swe-cache
-docker build --build-arg TARGETARCH="$(go env GOARCH)" `
-  -t ghcr.io/ndianabasi/swe-cache-services:0.1.0 `
-  -f .\services\Dockerfile .\services
 
 .\bin\swe-cache.exe init
 .\bin\swe-cache.exe start
@@ -113,10 +104,19 @@ The default root is `%LocalAppData%\swe-cache`. To use another drive:
 
 ## Install a built binary
 
-Building the CLI and building the service image are separate first-run steps.
-Build the matching `ghcr.io/ndianabasi/swe-cache-services:0.1.0` image using
-the development command above, or initialize with a published image via
-`swe-cache init --image registry.example/swe-cache-services:0.1.0`.
+`init` is self-contained: it inspects the matching service-image tag and, when
+the image is absent, builds it using the pinned Dockerfile and supervisord
+configuration embedded in the binary. An installed executable therefore works
+outside a source checkout. It never rebuilds an image whose requested tag is
+already local. `services/` retains the same build context for review and
+manual Docker builds; tests enforce that it matches the embedded files.
+
+To use a different tag, provide it during initialization; that tag is built
+locally if absent:
+
+```text
+swe-cache init --image registry.example/swe-cache-services:0.1.0
+```
 
 ### Linux
 
@@ -254,7 +254,8 @@ Ubuntu mirrors when actual HTTPS package-response caching is required.
 ## Cross-compiling release binaries
 
 Go can produce the CLI for supported architectures without a target host. The
-service image must still be built for the target's Docker Linux architecture.
+embedded service-image recipe uses the target host's Docker Linux architecture
+when `init` builds it.
 
 ```sh
 mkdir -p dist
@@ -276,9 +277,10 @@ unavailable:
 - Git creates a bare mirror from a local `git daemon`, then clones again after
   that daemon is stopped.
 
-Build the version-matched service image first, then run:
+Initialize once to build the version-matched service image, then run:
 
 ```sh
+swe-cache init
 SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 ```
 

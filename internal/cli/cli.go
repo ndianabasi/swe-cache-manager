@@ -324,6 +324,10 @@ func initConfig(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "initialize cache: %v\n", err)
 		return 1
 	}
+	if err := (service.Manager{Config: c}).EnsureImage(context.Background()); err != nil {
+		fmt.Fprintf(errOut, "initialize service image: %v\n", err)
+		return 1
+	}
 	fmt.Fprintf(out, "initialized persistent cache at %s\n", c.Root)
 	return 0
 }
