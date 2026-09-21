@@ -1,0 +1,48 @@
+version: '3'
+
+vars:
+  BINARY_NAME: swe-cache
+  BINARY_DIR: '{{.TASKFILE_DIR}}/bin'
+
+tasks:
+  default:
+    desc: List available project tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the native swe-cache executable into ./bin
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - mkdir -p bin
+      - cmd: go build -o ./bin/swe-cache ./cmd/swe-cache
+        platforms: [linux, darwin]
+      - cmd: go build -o ./bin/swe-cache.exe ./cmd/swe-cache
+        platforms: [windows]
+
+  test:
+    desc: Run the hermetic Go test suite
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - go test ./...
+
+  test:e2e:
+    desc: Run Docker-backed APT, OCI, and Git end-to-end tests
+    dir: '{{.TASKFILE_DIR}}'
+    env:
+      SWE_CACHE_E2E: '1'
+    cmds:
+      - go test -tags=integration ./e2e -v
+
+  install:
+    desc: Build and install swe-cache for the current user
+    deps: [build]
+    cmds:
+      - cmd: |
+          install_dir="${SWE_CACHE_INSTALL_DIR:-$HOME/.local/bin}"
+          mkdir -p "$install_dir"
+          install -m 0755 "{{.BINARY_DIR}}/swe-cache" "$install_dir/swe-cache"
+          printf 'Installed swe-cache in %s\n' "$install_dir"
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File "{{.TASKFILE_DIR}}/scripts/install-windows.ps1"
+        platforms: [windows]

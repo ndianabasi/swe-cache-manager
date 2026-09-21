@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,6 +112,7 @@ func TestOCIPullThroughServesManifestAndBlobAfterUpstreamIsOffline(t *testing.T)
 }
 
 func TestGitCloneUsesBareMirrorAfterRemoteIsOffline(t *testing.T) {
+	requireE2E(t)
 	repositoryRoot := t.TempDir()
 	worktree := filepath.Join(repositoryRoot, "worktree")
 	runGit(t, repositoryRoot, "init", worktree)
@@ -126,16 +128,8 @@ func TestGitCloneUsesBareMirrorAfterRemoteIsOffline(t *testing.T) {
 	}
 	runGit(t, repositoryRoot, "clone", "--bare", worktree, "fixtures/fixture.git")
 
-	port := freePort(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	daemon := exec.CommandContext(ctx, "git", "daemon", "--reuseaddr", "--export-all", "--base-path="+repositoryRoot, "--port="+strconv.Itoa(port), repositoryRoot)
-	if err := daemon.Start(); err != nil {
-		t.Fatal(err)
-	}
-	waitForPort(t, port)
-
-	remote := fmt.Sprintf("git://127.0.0.1:%d/fixtures/fixture.git", port)
+	remote, stopDaemon := startGitDaemon(t, repositoryRoot)
+	defer stopDaemon()
 	manager := gitcache.Manager{Root: filepath.Join(t.TempDir(), "mirrors"), Runner: service.CommandRunner{}}
 	first := filepath.Join(t.TempDir(), "first")
 	if err := manager.Clone(context.Background(), remote, first, ""); err != nil {
@@ -144,8 +138,7 @@ func TestGitCloneUsesBareMirrorAfterRemoteIsOffline(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(first, "README")); err != nil {
 		t.Fatal(err)
 	}
-	_ = daemon.Process.Kill()
-	_ = daemon.Wait()
+	stopDaemon()
 	second := filepath.Join(t.TempDir(), "second")
 	if err := manager.Clone(context.Background(), remote, second, ""); err != nil {
 		t.Fatalf("cached clone after remote shutdown: %v", err)
@@ -162,9 +155,7 @@ type tlsMaterial struct {
 
 func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tlsMaterial) service.Manager {
 	t.Helper()
-	if os.Getenv("SWE_CACHE_E2E") != "1" {
-		t.Skip("set SWE_CACHE_E2E=1 to run Docker-backed cache tests")
-	}
+	requireE2E(t)
 	image := os.Getenv(e2eImageEnv)
 	if image == "" {
 		image = config.DefaultImage
@@ -201,6 +192,13 @@ func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tls
 	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/", c.APT.Port))
 	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/v2/", c.OCI.Port))
 	return manager
+}
+
+func requireE2E(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SWE_CACHE_E2E") != "1" {
+		t.Skip("set SWE_CACHE_E2E=1 to run Docker-backed cache tests")
+	}
 }
 
 func newHostServer(t *testing.T, handler func(http.ResponseWriter, *http.Request)) (string, *atomic.Bool) {
@@ -327,6 +325,9 @@ func freePort(t *testing.T) int {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate)))
 		if err == nil {
 			_ = listener.Close()
+			// A fallback scan may skip occupied ports. Advance the shared cursor
+			// beyond the chosen port so the next allocation cannot reuse it.
+			nextE2EPort.Store(uint32(candidate - 18000))
 			return candidate
 		}
 	}
@@ -334,18 +335,49 @@ func freePort(t *testing.T) int {
 	return 0
 }
 
-func waitForPort(t *testing.T, port int) {
+func startGitDaemon(t *testing.T, repositoryRoot string) (string, func()) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 100*time.Millisecond)
-		if err == nil {
-			_ = connection.Close()
-			return
+	var lastError error
+	for attempt := 0; attempt < 10; attempt++ {
+		port := freePort(t)
+		remote := fmt.Sprintf("git://127.0.0.1:%d/fixtures/fixture.git", port)
+		daemon := exec.Command("git", "daemon", "--reuseaddr", "--listen=127.0.0.1", "--export-all", "--base-path="+repositoryRoot, "--port="+strconv.Itoa(port), repositoryRoot)
+		if err := daemon.Start(); err != nil {
+			lastError = err
+			continue
 		}
-		time.Sleep(50 * time.Millisecond)
+		if err := waitForGitRemote(remote); err == nil {
+			var once sync.Once
+			return remote, func() {
+				once.Do(func() {
+					if daemon.ProcessState == nil {
+						_ = daemon.Process.Kill()
+					}
+					_ = daemon.Wait()
+				})
+			}
+		} else {
+			lastError = err
+		}
+		_ = daemon.Process.Kill()
+		_ = daemon.Wait()
 	}
-	t.Fatalf("git daemon did not listen on %d", port)
+	t.Fatalf("git daemon never served fixture: %v", lastError)
+	return "", func() {}
+}
+
+func waitForGitRemote(remote string) error {
+	deadline := time.Now().Add(time.Second)
+	var output []byte
+	for time.Now().Before(deadline) {
+		var err error
+		output, err = exec.Command("git", "ls-remote", remote).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("git daemon did not serve %s: %s", remote, output)
 }
 
 func runGit(t *testing.T, directory string, args ...string) {

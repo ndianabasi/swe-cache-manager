@@ -6,7 +6,9 @@ cache root is the durable state.
 
 It supports Linux, macOS, and Windows hosts. The service image is Linux, so
 Docker Desktop must use Linux containers on macOS and Windows. Every platform
-needs Go 1.25+ for development, Git, and a running Docker engine.
+needs Go 1.25+ for development, Git, a running Docker engine, and
+[Go Task](https://taskfile.dev/docs/installation). Run `task --list` to see
+the available build, test, E2E, and installation commands.
 
 ## Defaults and configuration
 
@@ -40,12 +42,9 @@ Install Go, Git, and Docker Engine. Your user must have permission to use
 Docker (for example, through Docker's `docker` group).
 
 ```sh
-go test ./...
-# The integration suite builds a missing service image and starts isolated
-# containers automatically. Docker and Git are required.
-SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
-mkdir -p bin
-go build -o ./bin/swe-cache ./cmd/swe-cache
+task test
+task test:e2e
+task build
 
 ./bin/swe-cache init
 ./bin/swe-cache start
@@ -67,12 +66,9 @@ containers. The build works on both Apple Silicon (`arm64`) and Intel (`amd64`)
 Macs.
 
 ```sh
-go test ./...
-# The integration suite builds a missing service image and starts isolated
-# containers automatically. Docker and Git are required.
-SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
-mkdir -p bin
-go build -o ./bin/swe-cache ./cmd/swe-cache
+task test
+task test:e2e
+task build
 
 ./bin/swe-cache init
 ./bin/swe-cache start
@@ -93,13 +89,9 @@ Install Go, Git for Windows, and Docker Desktop with Linux containers running
 repository root:
 
 ```powershell
-go test ./...
-# The integration suite builds a missing service image and starts isolated
-# containers automatically. Docker and Git are required.
-$env:SWE_CACHE_E2E = "1"
-go test -tags=integration ./e2e -v
-New-Item -ItemType Directory -Force .\bin | Out-Null
-go build -o .\bin\swe-cache.exe .\cmd\swe-cache
+task test
+task test:e2e
+task build
 
 .\bin\swe-cache.exe init
 .\bin\swe-cache.exe start
@@ -131,47 +123,45 @@ swe-cache init --image registry.example/swe-cache-services:0.1.0
 ### Linux
 
 ```sh
-install -d "$HOME/.local/bin"
-install -m 0755 ./bin/swe-cache "$HOME/.local/bin/swe-cache"
-export PATH="$HOME/.local/bin:$PATH" # add to your shell profile
-
+task install
 swe-cache init
 swe-cache start
 swe-cache doctor
 ```
 
-For a system-wide command, install it to `/usr/local/bin/swe-cache` with the
-appropriate administrator privileges, then use `--root /var/lib/swe-cache`.
+`task install` uses `~/.local/bin` by default. Set
+`SWE_CACHE_INSTALL_DIR` before invoking it to choose another user-writable
+directory. Ensure that directory is on your shell `PATH`. For a system-wide
+command, use an administrator-approved directory such as `/usr/local/bin`,
+then use `--root /var/lib/swe-cache`.
 
 ### macOS
 
 ```sh
-install -d "$HOME/.local/bin"
-install -m 0755 ./bin/swe-cache "$HOME/.local/bin/swe-cache"
-export PATH="$HOME/.local/bin:$PATH" # add to ~/.zprofile or ~/.zshrc
-
+task install
 swe-cache init
 swe-cache start
 swe-cache doctor
 ```
 
+`task install` uses `~/.local/bin` by default. Set
+`SWE_CACHE_INSTALL_DIR` before invoking it to choose another user-writable
+directory, and ensure that directory is on your shell `PATH`.
+
 ### Windows
 
-In PowerShell, after building `swe-cache.exe`:
+In PowerShell:
 
 ```powershell
-$installDir = Join-Path $env:LOCALAPPDATA "Programs\swe-cache"
-New-Item -ItemType Directory -Force $installDir | Out-Null
-Copy-Item .\bin\swe-cache.exe (Join-Path $installDir "swe-cache.exe")
-
-# Enables it in this PowerShell session. Add $installDir to the User Path in
-# Windows Settings to persist this for future shells.
-$env:Path += ";$installDir"
-
+task install
 swe-cache.exe init
 swe-cache.exe start
 swe-cache.exe doctor
 ```
+
+By default this installs in `%LocalAppData%\Programs\swe-cache`, adds that
+directory to the User `Path`, and takes effect in newly opened terminals. Set
+`SWE_CACHE_INSTALL_DIR` before `task install` to override the directory.
 
 ## Configure Docker Hub pulls through Zot
 
