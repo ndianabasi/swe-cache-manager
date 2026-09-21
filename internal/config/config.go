@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -51,16 +52,31 @@ func Defaults() Config {
 	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort}, Git: GitConfig{Enabled: true}}
 }
 
-// defaultRoot supports a root-managed Linux installation while keeping the
-// portable binary usable by an unprivileged user (notably on macOS).
+// defaultRoot selects a writable, OS-native location for user installs while
+// retaining conventional system-wide locations for root-managed deployments.
 func defaultRoot() string {
-	if os.Geteuid() == 0 {
-		return "/var/lib/swe-cache"
+	switch runtime.GOOS {
+	case "linux":
+		if os.Geteuid() == 0 {
+			return "/var/lib/swe-cache"
+		}
+	case "darwin":
+		if os.Geteuid() == 0 {
+			return "/Library/Caches/swe-cache"
+		}
 	}
 	if root, err := os.UserCacheDir(); err == nil && root != "" {
 		return filepath.Join(root, "swe-cache")
 	}
-	return "/var/lib/swe-cache"
+	if runtime.GOOS == "linux" {
+		return "/var/lib/swe-cache"
+	}
+	// This only applies to an unusually restricted user environment where the
+	// OS did not expose a cache directory. Keep the fallback absolute.
+	if root, err := filepath.Abs("swe-cache"); err == nil {
+		return root
+	}
+	return filepath.Join(string(os.PathSeparator), "swe-cache")
 }
 
 func (c Config) ConfigDir() string { return filepath.Join(c.Root, "config") }
