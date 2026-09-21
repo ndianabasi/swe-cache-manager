@@ -64,7 +64,7 @@ func inspectCommand(command string, args []string, out, errOut io.Writer) int {
 	switch command {
 	case "status":
 		r := diagnostic.Status(ctx, c, service.CommandRunner{})
-		fmt.Fprintf(out, "service container: %s\napt-cacher-ng: %s (%s)\nzot: %s (%s)\napt endpoint: http://127.0.0.1:%d\noci endpoint: http://127.0.0.1:%d\ncache root: %s\nservice image: %s\n", r.Container, r.APT, r.Paths["apt"], r.OCI, r.Paths["oci"], c.APT.Port, c.OCI.Port, c.Root, c.Image)
+		renderStatus(out, c, r)
 	case "doctor":
 		r := diagnostic.Doctor(ctx, c, service.CommandRunner{})
 		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\nzot: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI)
