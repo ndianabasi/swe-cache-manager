@@ -36,8 +36,12 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	sync := extensions["sync"].(map[string]any)
 	registry := sync["registries"].([]any)[0].(map[string]any)
 	httpConfig := generated["http"].(map[string]any)
-	if registry["onDemand"] != true || registry["tlsVerify"] != true || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
+	if registry["onDemand"] != true || registry["tlsVerify"] != true || registry["preserveDigest"] != true || registry["manifestCheckInterval"] != c.OCI.ManifestCheckInterval || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
 		t.Fatalf("unexpected sync config: %#v", registry)
+	}
+	compat := httpConfig["compat"].([]any)
+	if len(compat) != 1 || compat[0] != "docker2s2" {
+		t.Fatalf("unexpected Docker compatibility configuration: %#v", httpConfig)
 	}
 }
 
@@ -93,6 +97,28 @@ func TestStartIsIdempotentWhenRunning(t *testing.T) {
 	for _, item := range f.calls {
 		if len(item.args) > 0 && item.args[0] == "run" {
 			t.Fatal("started an already running container")
+		}
+	}
+}
+
+func TestWarmStartsCacheThenPullsEachImage(t *testing.T) {
+	c := config.Defaults()
+	c.Root = t.TempDir()
+	f := &fakeRunner{responses: map[string]string{}}
+	output, err := (Manager{Config: c, Runner: f}).Warm(context.Background(), []string{"node:24-bookworm", "docker/dockerfile:1.7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output) != 2 {
+		t.Fatalf("got %d pull outputs, want 2", len(output))
+	}
+	joined := ""
+	for _, item := range f.calls {
+		joined += item.name + " " + strings.Join(item.args, " ") + "\n"
+	}
+	for _, want := range []string{"docker pull node:24-bookworm", "docker pull docker/dockerfile:1.7"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warm commands do not include %q:\n%s", want, joined)
 		}
 	}
 }

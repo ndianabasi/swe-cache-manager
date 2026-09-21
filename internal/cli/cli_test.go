@@ -43,6 +43,18 @@ func TestGitCloneHelpIncludesCommitExample(t *testing.T) {
 	}
 }
 
+func TestOCIWarmHelp(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"oci", "warm", "--help"}, &out, &errOut); code != 0 {
+		t.Fatalf("code = %d: %s", code, errOut.String())
+	}
+	for _, want := range []string{"oci warm", "node:24-bookworm", "Docker Hub registry mirror"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("OCI warm help does not contain %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestGitCloneForceIsAValuelessOption(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"git", "clone", "--force"}, &out, &errOut); code != 2 {

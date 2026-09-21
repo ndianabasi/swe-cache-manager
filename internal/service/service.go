@@ -80,9 +80,11 @@ func (m Manager) GenerateRuntimeConfig() error {
 		return err
 	}
 	registry := map[string]any{
-		"urls":      []string{m.Config.OCI.Upstream},
-		"onDemand":  true,
-		"tlsVerify": m.Config.OCI.TLSVerify,
+		"urls":                  []string{m.Config.OCI.Upstream},
+		"onDemand":              true,
+		"tlsVerify":             m.Config.OCI.TLSVerify,
+		"manifestCheckInterval": m.Config.OCI.ManifestCheckInterval,
+		"preserveDigest":        true,
 	}
 	if m.Config.OCI.TLSCertDir != "" {
 		registry["certDir"] = m.Config.OCI.TLSCertDir
@@ -90,7 +92,7 @@ func (m Manager) GenerateRuntimeConfig() error {
 	zot, err := json.MarshalIndent(map[string]any{
 		"distSpecVersion": "1.1.0",
 		"storage":         map[string]any{"rootDirectory": "/var/lib/zot", "gc": true, "dedupe": true},
-		"http":            map[string]any{"address": "0.0.0.0", "port": fmt.Sprint(m.Config.OCI.Port)},
+		"http":            map[string]any{"address": "0.0.0.0", "port": fmt.Sprint(m.Config.OCI.Port), "compat": []string{"docker2s2"}},
 		"log":             map[string]any{"level": "info"},
 		// Docker Hub is the one registry Docker can transparently use through
 		// its registry-mirrors setting. Other upstreams need explicit
@@ -203,6 +205,32 @@ func (m Manager) Restart(ctx context.Context) error {
 		return err
 	}
 	return m.Start(ctx)
+}
+
+// Warm asks Docker to pull image references after ensuring the local cache
+// service is available. With Docker Hub configured to use Zot as a registry
+// mirror, these pulls populate Zot outside a time-sensitive evaluator build.
+// Docker is deliberately used here rather than speaking Zot's private sync API:
+// it exercises the exact request path used by BuildKit on the host.
+func (m Manager) Warm(ctx context.Context, references []string) ([]string, error) {
+	if !m.Config.OCI.Enabled {
+		return nil, errors.New("OCI caching is disabled in configuration")
+	}
+	if len(references) == 0 {
+		return nil, errors.New("at least one image reference is required")
+	}
+	if err := m.Start(ctx); err != nil {
+		return nil, err
+	}
+	outputs := make([]string, 0, len(references))
+	for _, reference := range references {
+		output, err := m.runner().Run(ctx, "docker", "pull", reference)
+		if err != nil {
+			return outputs, fmt.Errorf("pull %s: %w", reference, err)
+		}
+		outputs = append(outputs, output)
+	}
+	return outputs, nil
 }
 
 func (m Manager) containerState(ctx context.Context) (string, error) {

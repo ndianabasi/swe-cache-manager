@@ -15,7 +15,7 @@ import (
 	"github.com/ndianabasi/swe-cache-manager/internal/service"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 func Run(args []string, out, errOut io.Writer) int {
 	return runWithReadme(context.Background(), args, out, errOut, "")
@@ -74,6 +74,9 @@ func runWithReadme(ctx context.Context, args []string, out, errOut io.Writer, re
 	}
 	if args[0] == "git" {
 		return gitCommand(ctx, args[1:], out, errOut)
+	}
+	if args[0] == "oci" {
+		return ociCommand(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "status" || args[0] == "doctor" || args[0] == "stats" {
 		if asksForHelp(args[1:]) {
@@ -239,6 +242,41 @@ func gitCommand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	return 0
 }
 
+func ociCommand(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) == 0 || asksForHelp(args) || (args[0] == "warm" && asksForHelp(args[1:])) {
+		ociWarmUsage(out)
+		return 0
+	}
+	if args[0] != "warm" {
+		fmt.Fprintln(errOut, "unknown oci command; use: swe-cache oci warm [--root PATH] IMAGE...")
+		return 2
+	}
+	args = args[1:]
+	root := ""
+	if len(args) >= 2 && args[0] == "--root" {
+		root, args = args[1], args[2:]
+	}
+	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
+		fmt.Fprintln(errOut, "usage: swe-cache oci warm [--root PATH] IMAGE...")
+		return 2
+	}
+	c, err := loadConfig(root)
+	if err != nil {
+		fmt.Fprintf(errOut, "load configuration: %v\n", err)
+		return 1
+	}
+	outputs, err := (service.Manager{Config: c}).Warm(ctx, args)
+	for _, output := range outputs {
+		fmt.Fprint(out, output)
+	}
+	if err != nil {
+		fmt.Fprintf(errOut, "warm OCI cache: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(out, "warmed %d OCI image(s) through Docker\n", len(args))
+	return 0
+}
+
 func lifecycle(command string, args []string, out, errOut io.Writer) int {
 	options, ok := lifecycleOptions(args, errOut)
 	if !ok {
@@ -400,7 +438,7 @@ func initConfig(args []string, out, errOut io.Writer) int {
 }
 
 func isKnown(command string) bool {
-	return strings.Contains(" start stop restart status doctor stats gc git ", " "+command+" ")
+	return strings.Contains(" start stop restart status doctor stats gc git oci ", " "+command+" ")
 }
 
 func usage(out io.Writer) {
@@ -420,6 +458,7 @@ Commands:
   status | doctor | stats            inspect cache health and use
   gc [apt|oci|git|--all]             perform safe maintenance
   git clone [--commit SHA] URL DIR   clone through a host-side bare mirror
+  oci warm IMAGE...                  prewarm Zot through Docker pulls
 
 Examples:
   swe-cache init --root /srv/swe-cache --oci-port 5500
@@ -447,6 +486,8 @@ func commandUsage(args []string, out, errOut io.Writer) int {
 		gcUsage(out)
 	case "git", "git clone":
 		gitCloneUsage(out)
+	case "oci", "oci warm":
+		ociWarmUsage(out)
 	default:
 		fmt.Fprintf(errOut, "unknown command for help: %s\n", strings.Join(args, " "))
 		usage(errOut)
@@ -531,5 +572,19 @@ Examples:
   swe-cache git clone --commit 0123abcd https://github.com/acme/project.git ./project
   swe-cache git clone --force https://github.com/acme/project.git ./project
   swe-cache git clone --root /srv/swe-cache git@github.com:acme/project.git ./project
+`)
+}
+
+func ociWarmUsage(out io.Writer) {
+	fmt.Fprint(out, `Usage: swe-cache oci warm [--root PATH] IMAGE...
+
+Pre-pulls one or more images after starting the cache service. Docker must be
+configured to use Zot as its Docker Hub registry mirror for these pulls to
+populate the durable Zot cache. Use this before an evaluator run so cold Zot
+sync work does not block BuildKit metadata resolution.
+
+Examples:
+  swe-cache oci warm node:24-bookworm docker/dockerfile:1.7
+  swe-cache oci warm --root /srv/swe-cache python:3.13-bookworm
 `)
 }

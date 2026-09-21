@@ -10,10 +10,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.1.0"
+	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.2.0"
 	DefaultAPTPort = 3142 // apt-cacher-ng's established default
 	DefaultOCIPort = 5500 // intentionally avoids the commonly occupied 5000
 )
@@ -34,10 +35,11 @@ type APTConfig struct {
 	Port    int
 }
 type OCIConfig struct {
-	Enabled   bool
-	Port      int
-	Upstream  string
-	TLSVerify bool
+	Enabled               bool
+	Port                  int
+	Upstream              string
+	TLSVerify             bool
+	ManifestCheckInterval string
 	// TLSCertDir is an in-container directory containing registry CA material.
 	// Normal public registries leave this empty; integration tests and private
 	// registries can mount certificates beneath the generated Zot config.
@@ -55,7 +57,7 @@ func Defaults() Config {
 	if image == "" {
 		image = DefaultImage
 	}
-	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true}, Git: GitConfig{Enabled: true}}
+	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true, ManifestCheckInterval: "1h"}, Git: GitConfig{Enabled: true}}
 }
 
 // defaultRoot selects a writable, OS-native location for user installs while
@@ -108,6 +110,15 @@ func (c Config) Validate() error {
 	}
 	if c.OCI.Enabled && c.OCI.Upstream == "" {
 		return errors.New("OCI upstream must not be empty when OCI caching is enabled")
+	}
+	if c.OCI.Enabled && c.OCI.ManifestCheckInterval == "" {
+		return errors.New("OCI manifest check interval must not be empty when OCI caching is enabled")
+	}
+	if c.OCI.Enabled {
+		interval, err := time.ParseDuration(c.OCI.ManifestCheckInterval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("OCI manifest check interval must be a positive duration: %q", c.OCI.ManifestCheckInterval)
+		}
 	}
 	for name, port := range map[string]int{"apt": c.APT.Port, "oci": c.OCI.Port} {
 		if port < 1 || port > 65535 {
@@ -202,6 +213,8 @@ func set(c *Config, section, key, value string) error {
 		c.OCI.Upstream = value
 	case "oci.tls_verify":
 		return boolValue(&c.OCI.TLSVerify)
+	case "oci.manifest_check_interval":
+		c.OCI.ManifestCheckInterval = value
 	case "git.enabled":
 		return boolValue(&c.Git.Enabled)
 	case "maintenance.enabled":
@@ -216,6 +229,6 @@ func (c Config) Save() error {
 	if err := c.EnsureLayout(); err != nil {
 		return err
 	}
-	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\n\n[git]\nenabled = %t\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.Git.Enabled, c.Maintenance.Enabled)
+	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\nmanifest_check_interval = %q\n\n[git]\nenabled = %t\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.OCI.ManifestCheckInterval, c.Git.Enabled, c.Maintenance.Enabled)
 	return os.WriteFile(c.Path(), []byte(data), 0640)
 }

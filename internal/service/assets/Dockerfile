@@ -2,7 +2,7 @@
 # The binary and this image are released with the same version. All valuable
 # state is bind-mounted by swe-cache; this image may be deleted at any time.
 ARG TARGETARCH
-FROM ghcr.io/project-zot/zot-linux-${TARGETARCH}:v2.1.0 AS zot
+FROM ghcr.io/project-zot/zot-linux-${TARGETARCH}:v2.1.21 AS zot
 
 FROM debian:bookworm-slim
 ARG TARGETARCH

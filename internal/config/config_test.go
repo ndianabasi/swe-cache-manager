@@ -12,6 +12,7 @@ func TestSaveAndLoad(t *testing.T) {
 	c.APT.Port = 43142
 	c.OCI.Upstream = "https://registry.example.test"
 	c.OCI.TLSVerify = false
+	c.OCI.ManifestCheckInterval = "30m"
 	if err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +20,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Root != c.Root || got.APT.Port != 43142 || got.OCI.Upstream != c.OCI.Upstream || got.OCI.TLSVerify != c.OCI.TLSVerify {
+	if got.Root != c.Root || got.APT.Port != 43142 || got.OCI.Upstream != c.OCI.Upstream || got.OCI.TLSVerify != c.OCI.TLSVerify || got.OCI.ManifestCheckInterval != c.OCI.ManifestCheckInterval {
 		t.Fatalf("loaded %#v, want %#v", got, c)
 	}
 	for _, name := range []string{"apt", "zot", "git", "config", "logs"} {
@@ -34,6 +35,14 @@ func TestRejectsRelativeRoot(t *testing.T) {
 	c.Root = "cache"
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestRejectsInvalidManifestCheckInterval(t *testing.T) {
+	c := Defaults()
+	c.OCI.ManifestCheckInterval = "eventually"
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected manifest check interval validation error")
 	}
 }
 
