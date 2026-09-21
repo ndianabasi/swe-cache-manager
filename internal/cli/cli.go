@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ndianabasi/swe-cache-manager/internal/config"
@@ -172,14 +173,26 @@ func gitCommand(args []string, out, errOut io.Writer) int {
 }
 
 func lifecycle(command string, args []string, out, errOut io.Writer) int {
-	root, ok := rootOption(args, errOut)
+	options, ok := lifecycleOptions(args, errOut)
 	if !ok {
 		return 2
 	}
-	loaded, err := loadConfig(root)
+	loaded, err := loadConfig(options.root)
 	if err != nil {
 		fmt.Fprintf(errOut, "load configuration: %v\n", err)
 		return 1
+	}
+	if options.aptPortSet {
+		loaded.APT.Port = options.aptPort
+	}
+	if options.ociPortSet {
+		loaded.OCI.Port = options.ociPort
+	}
+	if command != "stop" && (options.aptPortSet || options.ociPortSet) {
+		if err := loaded.Save(); err != nil {
+			fmt.Fprintf(errOut, "save configuration: %v\n", err)
+			return 1
+		}
 	}
 	m := service.Manager{Config: loaded}
 	ctx := context.Background()
@@ -197,6 +210,48 @@ func lifecycle(command string, args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintf(out, "%s complete\n", command)
 	return 0
+}
+
+type lifecycleFlags struct {
+	root                   string
+	aptPort, ociPort       int
+	aptPortSet, ociPortSet bool
+}
+
+func lifecycleOptions(args []string, errOut io.Writer) (lifecycleFlags, bool) {
+	var result lifecycleFlags
+	for len(args) > 0 {
+		if len(args) < 2 {
+			fmt.Fprintf(errOut, "%s requires a value\n", args[0])
+			return result, false
+		}
+		value := args[1]
+		switch args[0] {
+		case "--root":
+			result.root = value
+		case "--apt-port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid APT port %q\n", value)
+				return result, false
+			}
+			result.aptPort = port
+			result.aptPortSet = true
+		case "--oci-port":
+			port, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid OCI port %q\n", value)
+				return result, false
+			}
+			result.ociPort = port
+			result.ociPortSet = true
+		default:
+			fmt.Fprintf(errOut, "unknown option %q\n", args[0])
+			return result, false
+		}
+		args = args[2:]
+	}
+	return result, true
 }
 
 func loadConfig(root string) (config.Config, error) {
@@ -236,6 +291,30 @@ func initConfig(args []string, out, errOut io.Writer) int {
 			}
 			c.Image = args[1]
 			args = args[2:]
+		case "--apt-port":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--apt-port requires a port")
+				return 2
+			}
+			port, err := strconv.Atoi(args[1])
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid APT port %q\n", args[1])
+				return 2
+			}
+			c.APT.Port = port
+			args = args[2:]
+		case "--oci-port":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--oci-port requires a port")
+				return 2
+			}
+			port, err := strconv.Atoi(args[1])
+			if err != nil {
+				fmt.Fprintf(errOut, "invalid OCI port %q\n", args[1])
+				return 2
+			}
+			c.OCI.Port = port
+			args = args[2:]
 		default:
 			fmt.Fprintf(errOut, "unknown init option %q\n", args[0])
 			return 2
@@ -257,8 +336,11 @@ func usage(out io.Writer) {
 	fmt.Fprint(out, `Usage: swe-cache <command> [options]
 
 Commands:
-  init [--root PATH] [--image REF]  create persistent layout and config
-  start | stop | restart            manage the disposable service container
+  init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT]
+                                      create persistent layout and config
+  start | restart [--root PATH] [--apt-port PORT] [--oci-port PORT]
+                                      manage the disposable service container
+  stop [--root PATH]                  stop the service container
   status | doctor | stats            inspect cache health and use
   gc [apt|oci|git|--all]             perform safe maintenance
   git clone [--commit SHA] URL DIR   clone through a host-side bare mirror

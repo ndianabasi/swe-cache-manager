@@ -35,7 +35,8 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	extensions := generated["extensions"].(map[string]any)
 	sync := extensions["sync"].(map[string]any)
 	registry := sync["registries"].([]any)[0].(map[string]any)
-	if registry["onDemand"] != true {
+	httpConfig := generated["http"].(map[string]any)
+	if registry["onDemand"] != true || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
 		t.Fatalf("unexpected sync config: %#v", registry)
 	}
 }
@@ -75,7 +76,7 @@ func TestStartCreatesContainerWithPersistentMounts(t *testing.T) {
 		}
 	}
 	got := strings.Join(run.args, " ")
-	for _, want := range []string{c.APTDir(), c.OCIDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), "127.0.0.1:3142:3142", c.Image} {
+	for _, want := range []string{c.APTDir(), c.OCIDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), fmt.Sprintf("127.0.0.1:%d:%d", c.APT.Port, c.APT.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.OCI.Port, c.OCI.Port), c.Image} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run arguments do not include %q: %s", want, got)
 		}

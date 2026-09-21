@@ -51,14 +51,14 @@ func (m Manager) GenerateRuntimeConfig() error {
 	if err := m.Config.EnsureLayout(); err != nil {
 		return err
 	}
-	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: 3142\nForeGround: 1\n")
+	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: %d\nForeGround: 1\n", m.Config.APT.Port)
 	if err := os.WriteFile(filepath.Join(m.Config.APTConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
 		return err
 	}
 	zot, err := json.MarshalIndent(map[string]any{
 		"distSpecVersion": "1.1.0",
 		"storage":         map[string]any{"rootDirectory": "/var/lib/zot", "gc": true, "dedupe": true},
-		"http":            map[string]any{"address": "0.0.0.0", "port": "5000"},
+		"http":            map[string]any{"address": "0.0.0.0", "port": fmt.Sprint(m.Config.OCI.Port)},
 		"log":             map[string]any{"level": "info"},
 		// Docker Hub is the one registry Docker can transparently use through
 		// its registry-mirrors setting. Other upstreams need explicit
@@ -127,10 +127,10 @@ func (m Manager) Start(ctx context.Context) error {
 	}
 	args := []string{"run", "--detach", "--name", ContainerName, "--restart", "unless-stopped", "--label", "io.swe-cache.managed=true"}
 	if m.Config.APT.Enabled {
-		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:3142", m.Config.APT.Port))
+		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.APT.Port, m.Config.APT.Port))
 	}
 	if m.Config.OCI.Enabled {
-		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:5000", m.Config.OCI.Port))
+		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.OCI.Port, m.Config.OCI.Port))
 	}
 	args = append(args,
 		"--mount", "type=bind,src="+m.Config.APTDir()+",dst=/var/cache/apt-cacher-ng",

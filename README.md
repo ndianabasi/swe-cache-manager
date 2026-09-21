@@ -16,6 +16,15 @@ Initialize a non-default location (useful for development) with:
 go run ./cmd/swe-cache init --root /absolute/cache/path
 ```
 
+The APT proxy defaults to apt-cacher-ng's conventional port `3142`; the OCI
+registry defaults to `5500` to avoid common development ports. Set either at
+initialization or persist a new value while starting/restarting:
+
+```sh
+swe-cache init --apt-port 3142 --oci-port 5500
+swe-cache restart --oci-port 5510
+```
+
 The tracked configuration is intentionally small. `swe-cache` generates the
 service-specific configurations below `config/`; users do not edit them.
 

@@ -40,3 +40,10 @@ func TestDefaultsUseAnAbsoluteRoot(t *testing.T) {
 		t.Fatalf("default root is not absolute: %q", Defaults().Root)
 	}
 }
+
+func TestDefaultPorts(t *testing.T) {
+	c := Defaults()
+	if c.APT.Port != DefaultAPTPort || c.OCI.Port != DefaultOCIPort {
+		t.Fatalf("unexpected default ports: %#v", c)
+	}
+}

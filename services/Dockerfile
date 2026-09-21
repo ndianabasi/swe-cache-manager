@@ -11,5 +11,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=zot /usr/local/bin/zot-linux-${TARGETARCH} /usr/local/bin/zot
 COPY supervisord.conf /etc/supervisor/conf.d/swe-cache.conf
-EXPOSE 3142 5000
 ENTRYPOINT ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/swe-cache.conf"]

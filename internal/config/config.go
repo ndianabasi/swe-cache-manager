@@ -11,7 +11,11 @@ import (
 	"strings"
 )
 
-const DefaultImage = "ghcr.io/ndianabasi/swe-cache-services:0.1.0"
+const (
+	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.1.0"
+	DefaultAPTPort = 3142 // apt-cacher-ng's established default
+	DefaultOCIPort = 5500 // intentionally avoids the commonly occupied 5000
+)
 
 // Config is deliberately a small, stable top-level configuration. The cache
 // owns generated apt-cacher-ng, zot, and supervisord files below Root/config.
@@ -44,7 +48,7 @@ func Defaults() Config {
 	if image == "" {
 		image = DefaultImage
 	}
-	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: 3142}, OCI: OCIConfig{Enabled: true, Port: 5000}, Git: GitConfig{Enabled: true}}
+	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort}, Git: GitConfig{Enabled: true}}
 }
 
 // defaultRoot supports a root-managed Linux installation while keeping the

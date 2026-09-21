@@ -21,3 +21,11 @@ func TestUnknownCommand(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 }
+
+func TestLifecycleOptionsAcceptPorts(t *testing.T) {
+	var errOut bytes.Buffer
+	got, ok := lifecycleOptions([]string{"--oci-port", "5510", "--apt-port", "3142"}, &errOut)
+	if !ok || got.ociPort != 5510 || got.aptPort != 3142 || !got.ociPortSet || !got.aptPortSet {
+		t.Fatalf("parsed %#v, stderr %s", got, errOut.String())
+	}
+}
