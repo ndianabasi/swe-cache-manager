@@ -2,9 +2,9 @@
 # The binary and this image are released with the same version. All valuable
 # state is bind-mounted by swe-cache; this image may be deleted at any time.
 ARG TARGETARCH
-FROM ghcr.io/project-zot/zot-linux-${TARGETARCH}:v2.1.21 AS zot
+FROM registry:3.1.0 AS distribution
 
-FROM golang:1.25.1-bookworm AS athens
+FROM golang:1.26.2-bookworm AS athens
 RUN go install github.com/gomods/athens/cmd/proxy@v0.18.1
 
 FROM node:24-bookworm-slim
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --global --ignore-scripts verdaccio@6.9.2 \
     && npm cache clean --force
-COPY --from=zot /usr/local/bin/zot-linux-${TARGETARCH} /usr/local/bin/zot
+COPY --from=distribution /bin/registry /usr/local/bin/registry
 COPY --from=athens /go/bin/proxy /usr/local/bin/athens-proxy
 COPY --from=athens /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"

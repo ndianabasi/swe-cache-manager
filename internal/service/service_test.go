@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,31 +16,22 @@ type call struct {
 	args []string
 }
 
-func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
+func TestRuntimeDistributionConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	c := config.Defaults()
 	c.Root = t.TempDir()
 	m := Manager{Config: c}
 	if err := m.GenerateRuntimeConfig(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(c.OCIConfigDir(), "zot.json"))
+	b, err := os.ReadFile(filepath.Join(c.RegistryConfigDir(), "config.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var generated map[string]any
-	if err := json.Unmarshal(b, &generated); err != nil {
-		t.Fatal(err)
-	}
-	extensions := generated["extensions"].(map[string]any)
-	sync := extensions["sync"].(map[string]any)
-	registry := sync["registries"].([]any)[0].(map[string]any)
-	httpConfig := generated["http"].(map[string]any)
-	if registry["onDemand"] != true || registry["tlsVerify"] != true || registry["preserveDigest"] != true || registry["manifestCheckInterval"] != c.OCI.ManifestCheckInterval || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
-		t.Fatalf("unexpected sync config: %#v", registry)
-	}
-	compat := httpConfig["compat"].([]any)
-	if len(compat) != 1 || compat[0] != "docker2s2" {
-		t.Fatalf("unexpected Docker compatibility configuration: %#v", httpConfig)
+	registry := string(b)
+	for _, want := range []string{"version: 0.1", "rootdirectory: /var/lib/registry", fmt.Sprintf("addr: 0.0.0.0:%d", c.OCI.Port), "remoteurl: \"" + c.OCI.Upstream + "\""} {
+		if !strings.Contains(registry, want) {
+			t.Errorf("Distribution configuration does not include %q:\n%s", want, registry)
+		}
 	}
 	verdaccio, err := os.ReadFile(filepath.Join(c.NPMConfigDir(), "verdaccio.yaml"))
 	if err != nil {
@@ -59,6 +49,9 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	}
 	if strings.Contains(string(supervisor), "{{ .GoPort }}") {
 		t.Fatalf("unrendered supervisord template:\n%s", supervisor)
+	}
+	if !strings.Contains(string(supervisor), "[program:distribution]") || strings.Contains(string(supervisor), "zot") {
+		t.Fatalf("unexpected Distribution supervisor configuration:\n%s", supervisor)
 	}
 }
 
@@ -97,7 +90,7 @@ func TestStartCreatesContainerWithPersistentMounts(t *testing.T) {
 		}
 	}
 	got := strings.Join(run.args, " ")
-	for _, want := range []string{c.APTDir(), c.OCIDir(), c.NPMDir(), c.GoDir(), c.APTConfigDir(), c.OCIConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), fmt.Sprintf("127.0.0.1:%d:%d", c.APT.Port, c.APT.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.OCI.Port, c.OCI.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.NPM.Port, c.NPM.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.Go.Port, c.Go.Port), c.Image} {
+	for _, want := range []string{c.APTDir(), c.RegistryDir(), c.NPMDir(), c.GoDir(), c.APTConfigDir(), c.RegistryConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), fmt.Sprintf("127.0.0.1:%d:%d", c.APT.Port, c.APT.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.OCI.Port, c.OCI.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.NPM.Port, c.NPM.Port), fmt.Sprintf("127.0.0.1:%d:%d", c.Go.Port, c.Go.Port), c.Image} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run arguments do not include %q: %s", want, got)
 		}

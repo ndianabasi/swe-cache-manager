@@ -15,7 +15,7 @@ import (
 	"github.com/ndianabasi/swe-cache-manager/internal/service"
 )
 
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 func Run(args []string, out, errOut io.Writer) int {
 	return runWithReadme(context.Background(), args, out, errOut, "")
@@ -118,7 +118,7 @@ func inspectCommand(command string, args []string, out, errOut io.Writer) int {
 		renderStatus(out, c, r)
 	case "doctor":
 		r := diagnostic.Doctor(ctx, c, service.CommandRunner{})
-		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\nzot: %s\nverdaccio: %s\nathens: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI, r.NPM, r.Go)
+		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\ndistribution: %s\nverdaccio: %s\nathens: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI, r.NPM, r.Go)
 		for _, name := range []string{"apt", "oci", "git", "npm", "go"} {
 			fmt.Fprintf(out, "%s path: %s\n", name, r.Paths[name])
 		}
@@ -504,7 +504,7 @@ Commands:
   status | doctor | stats            inspect cache health and use
   gc [apt|oci|git|npm|go|--all]      perform safe maintenance
   git clone [--commit SHA] URL DIR   clone through a host-side bare mirror
-  oci warm IMAGE...                  prewarm Zot through Docker pulls
+  oci warm IMAGE...                  prewarm the OCI cache through Docker pulls
 
 Examples:
   swe-cache init --root /srv/swe-cache --oci-port 5500
@@ -551,7 +551,7 @@ image is not local, init builds it from the build context embedded in this binar
 Examples:
   swe-cache init
   swe-cache init --root /srv/swe-cache --apt-port 3142 --oci-port 5500 --npm-port 4873 --go-port 3000
-  swe-cache init --image registry.example/swe-cache-services:0.3.0
+  swe-cache init --image registry.example/swe-cache-services:0.4.0
 `)
 }
 
@@ -625,9 +625,8 @@ func ociWarmUsage(out io.Writer) {
 	fmt.Fprint(out, `Usage: swe-cache oci warm [--root PATH] IMAGE...
 
 Pre-pulls one or more images after starting the cache service. Docker must be
-configured to use Zot as its Docker Hub registry mirror for these pulls to
-populate the durable Zot cache. Use this before an evaluator run so cold Zot
-sync work does not block BuildKit metadata resolution.
+configured to use Distribution as its Docker Hub registry mirror for these
+pulls to populate the durable OCI cache before an evaluator run.
 
 Examples:
   swe-cache oci warm node:24-bookworm docker/dockerfile:1.7

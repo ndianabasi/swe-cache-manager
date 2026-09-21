@@ -1,3 +1,7 @@
+> Superseded OCI note: the implementation uses CNCF Distribution's Docker Hub
+> pull-through cache, stored under `registry/`, rather than Zot. The remainder
+> of this historical planning document records the original design discussion.
+
 Here’s the updated implementation task breakdown incorporating the **single portable binary**, **service container**, **supervisord**, optional **crond**, host-side Git cache, and disposable-container model.
 
 1. **Define the product boundary and persistent layout**

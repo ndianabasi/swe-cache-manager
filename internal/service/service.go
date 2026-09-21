@@ -5,7 +5,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -80,33 +80,22 @@ func (m Manager) GenerateRuntimeConfig() error {
 	if err := os.WriteFile(filepath.Join(m.Config.APTConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
 		return err
 	}
-	registry := map[string]any{
-		"urls":                  []string{m.Config.OCI.Upstream},
-		"onDemand":              true,
-		"tlsVerify":             m.Config.OCI.TLSVerify,
-		"manifestCheckInterval": m.Config.OCI.ManifestCheckInterval,
-		"preserveDigest":        true,
-	}
-	if m.Config.OCI.TLSCertDir != "" {
-		registry["certDir"] = m.Config.OCI.TLSCertDir
-	}
-	zot, err := json.MarshalIndent(map[string]any{
-		"distSpecVersion": "1.1.0",
-		"storage":         map[string]any{"rootDirectory": "/var/lib/zot", "gc": true, "dedupe": true},
-		"http":            map[string]any{"address": "0.0.0.0", "port": fmt.Sprint(m.Config.OCI.Port), "compat": []string{"docker2s2"}},
-		"log":             map[string]any{"level": "info"},
-		// Docker Hub is the one registry Docker can transparently use through
-		// its registry-mirrors setting. Other upstreams need explicit
-		// registry-host mapping, so they are intentionally not guessed here.
-		"extensions": map[string]any{"sync": map[string]any{
-			"enable":     true,
-			"registries": []map[string]any{registry},
-		}},
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(m.Config.OCIConfigDir(), "zot.json"), append(zot, '\n'), 0640); err != nil {
+	registry := fmt.Sprintf(`version: 0.1
+log:
+  level: warn
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+http:
+  addr: 0.0.0.0:%d
+proxy:
+  remoteurl: %s
+`, m.Config.OCI.Port, strconv.Quote(m.Config.OCI.Upstream))
+	if err := os.WriteFile(filepath.Join(m.Config.RegistryConfigDir(), "config.yml"), []byte(registry), 0640); err != nil {
 		return err
 	}
 	npm := fmt.Sprintf(`storage: /var/lib/verdaccio
@@ -197,11 +186,11 @@ func (m Manager) Start(ctx context.Context) error {
 	}
 	args = append(args,
 		"--mount", "type=bind,src="+m.Config.APTDir()+",dst=/var/cache/apt-cacher-ng",
-		"--mount", "type=bind,src="+m.Config.OCIDir()+",dst=/var/lib/zot",
+		"--mount", "type=bind,src="+m.Config.RegistryDir()+",dst=/var/lib/registry",
 		"--mount", "type=bind,src="+m.Config.NPMDir()+",dst=/var/lib/verdaccio",
 		"--mount", "type=bind,src="+m.Config.GoDir()+",dst=/var/lib/athens",
 		"--mount", "type=bind,src="+m.Config.APTConfigDir()+",dst=/etc/apt-cacher-ng,readonly",
-		"--mount", "type=bind,src="+m.Config.OCIConfigDir()+",dst=/etc/swe-cache,readonly",
+		"--mount", "type=bind,src="+m.Config.RegistryConfigDir()+",dst=/etc/docker/registry,readonly",
 		"--mount", "type=bind,src="+m.Config.NPMConfigDir()+",dst=/etc/swe-cache/npm,readonly",
 		"--mount", "type=bind,src="+m.Config.SupervisorConfigDir()+",dst=/etc/supervisor/conf.d,readonly",
 		"--mount", "type=bind,src="+m.Config.LogDir()+",dst=/var/log/swe-cache",
@@ -242,10 +231,10 @@ func (m Manager) Restart(ctx context.Context) error {
 }
 
 // Warm asks Docker to pull image references after ensuring the local cache
-// service is available. With Docker Hub configured to use Zot as a registry
-// mirror, these pulls populate Zot outside a time-sensitive evaluator build.
-// Docker is deliberately used here rather than speaking Zot's private sync API:
-// it exercises the exact request path used by BuildKit on the host.
+// service is available. With Docker Hub configured to use Distribution as a
+// registry mirror, these pulls populate the durable cache outside a
+// time-sensitive evaluator build. Docker is deliberately used here because it
+// exercises the exact request path used by BuildKit on the host.
 func (m Manager) Warm(ctx context.Context, references []string) ([]string, error) {
 	if !m.Config.OCI.Enabled {
 		return nil, errors.New("OCI caching is disabled in configuration")

@@ -23,7 +23,7 @@ func TestRenderStatusGroupsOperationalDetails(t *testing.T) {
 		Go:        "healthy",
 		OCI:       "healthy",
 		Paths: map[string]string{
-			"apt": "/cache/apt", "oci": "/cache/zot", "git": "/cache/git", "npm": "/cache/npm", "go": "/cache/go",
+			"apt": "/cache/apt", "oci": "/cache/registry", "git": "/cache/git", "npm": "/cache/npm", "go": "/cache/go",
 		},
 	}
 	var output bytes.Buffer

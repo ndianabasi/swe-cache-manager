@@ -33,7 +33,7 @@ func Status(ctx context.Context, c config.Config, runner service.Runner) Report 
 	if err != nil || state == "" {
 		state = "not created"
 	}
-	r := Report{Container: state, APT: "disabled", OCI: "disabled", NPM: "disabled", Go: "disabled", Paths: map[string]string{"apt": c.APTDir(), "oci": c.OCIDir(), "git": c.GitDir(), "npm": c.NPMDir(), "go": c.GoDir()}}
+	r := Report{Container: state, APT: "disabled", OCI: "disabled", NPM: "disabled", Go: "disabled", Paths: map[string]string{"apt": c.APTDir(), "oci": c.RegistryDir(), "git": c.GitDir(), "npm": c.NPMDir(), "go": c.GoDir()}}
 	if c.APT.Enabled {
 		r.APT = endpointHealth(c.APT.Port, "/")
 	}
@@ -113,7 +113,7 @@ func CollectStats(c config.Config) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	oci, err := directoryBytes(c.OCIDir())
+	oci, err := directoryBytes(c.RegistryDir())
 	if err != nil {
 		return Stats{}, err
 	}

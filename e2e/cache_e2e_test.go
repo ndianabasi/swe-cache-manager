@@ -42,6 +42,7 @@ const e2eImageEnv = "SWE_CACHE_E2E_IMAGE"
 var nextE2EPort atomic.Uint32
 
 func TestAPTProxyServesCachedPackageAfterUpstreamIsOffline(t *testing.T) {
+	requireE2E(t)
 	upstream, online := newHostServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/pool/main/s/swe-cache-test/swe-cache-test_1_all.deb" {
 			http.NotFound(w, r)
@@ -51,7 +52,7 @@ func TestAPTProxyServesCachedPackageAfterUpstreamIsOffline(t *testing.T) {
 		w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
 		_, _ = w.Write([]byte("not-a-real-deb-but-a-cacheable-package-payload"))
 	})
-	cache := startCache(t, upstream, true, nil)
+	cache := startCache(t, upstream)
 	proxy, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", cache.Config.APT.Port))
 	if err != nil {
 		t.Fatal(err)
@@ -67,11 +68,12 @@ func TestAPTProxyServesCachedPackageAfterUpstreamIsOffline(t *testing.T) {
 }
 
 func TestOCIPullThroughServesManifestAndBlobAfterUpstreamIsOffline(t *testing.T) {
+	requireE2E(t)
 	configBlob := []byte(`{"architecture":"amd64","os":"linux"}`)
 	configDigest := digest(configBlob)
 	manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"%s","size":%d},"layers":[]}`, configDigest, len(configBlob)))
 	manifestDigest := digest(manifest)
-	upstream, online, certificates := newHostTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+	upstream, online := newHostServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v2/":
 			w.WriteHeader(http.StatusOK)
@@ -93,7 +95,7 @@ func TestOCIPullThroughServesManifestAndBlobAfterUpstreamIsOffline(t *testing.T)
 			http.NotFound(w, r)
 		}
 	})
-	cache := startCache(t, upstream, true, certificates)
+	cache := startCache(t, upstream)
 	client := &http.Client{Timeout: 15 * time.Second}
 	base := fmt.Sprintf("http://127.0.0.1:%d/v2/example", cache.Config.OCI.Port)
 	if got := getBody(t, client, base+"/manifests/latest"); !bytes.Equal(got, manifest) {
@@ -153,7 +155,7 @@ type tlsMaterial struct {
 	key         []byte
 }
 
-func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tlsMaterial) service.Manager {
+func startCache(t *testing.T, upstream string) service.Manager {
 	t.Helper()
 	requireE2E(t)
 	image := os.Getenv(e2eImageEnv)
@@ -166,18 +168,6 @@ func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tls
 	c.APT.Port = freePort(t)
 	c.OCI.Port = freePort(t)
 	c.OCI.Upstream = upstream
-	c.OCI.TLSVerify = tlsVerify
-	if certificates != nil {
-		c.OCI.TLSCertDir = "/etc/swe-cache/certs"
-		if err := os.MkdirAll(filepath.Join(c.OCIConfigDir(), "certs"), 0750); err != nil {
-			t.Fatal(err)
-		}
-		for name, content := range map[string][]byte{"ca.crt": certificates.certificate, "client.cert": certificates.certificate, "client.key": certificates.key} {
-			if err := os.WriteFile(filepath.Join(c.OCIConfigDir(), "certs", name), content, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
 	manager := service.Manager{Config: c, Name: fmt.Sprintf("swe-cache-e2e-%d", time.Now().UnixNano())}
 	if err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)

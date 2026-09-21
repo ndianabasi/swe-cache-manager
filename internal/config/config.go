@@ -10,11 +10,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
-	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.3.0"
+	DefaultImage   = "ghcr.io/ndianabasi/swe-cache-services:0.4.0"
 	DefaultAPTPort = 3142 // apt-cacher-ng's established default
 	DefaultOCIPort = 5500 // intentionally avoids the commonly occupied 5000
 	DefaultNPMPort = 4873 // Verdaccio's established default
@@ -22,7 +21,8 @@ const (
 )
 
 // Config is deliberately a small, stable top-level configuration. The cache
-// owns generated apt-cacher-ng, zot, and supervisord files below Root/config.
+// owns generated apt-cacher-ng, Distribution, and supervisord files below
+// Root/config.
 type Config struct {
 	Root        string
 	Image       string
@@ -39,15 +39,9 @@ type APTConfig struct {
 	Port    int
 }
 type OCIConfig struct {
-	Enabled               bool
-	Port                  int
-	Upstream              string
-	TLSVerify             bool
-	ManifestCheckInterval string
-	// TLSCertDir is an in-container directory containing registry CA material.
-	// Normal public registries leave this empty; integration tests and private
-	// registries can mount certificates beneath the generated Zot config.
-	TLSCertDir string
+	Enabled  bool
+	Port     int
+	Upstream string
 }
 type GitConfig struct{ Enabled bool }
 type NPMConfig struct {
@@ -69,7 +63,7 @@ func Defaults() Config {
 	if image == "" {
 		image = DefaultImage
 	}
-	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true, ManifestCheckInterval: "1h"}, Git: GitConfig{Enabled: true}, NPM: NPMConfig{Enabled: true, Port: DefaultNPMPort}, Go: GoConfig{Enabled: true, Port: DefaultGoPort}}
+	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io"}, Git: GitConfig{Enabled: true}, NPM: NPMConfig{Enabled: true, Port: DefaultNPMPort}, Go: GoConfig{Enabled: true, Port: DefaultGoPort}}
 }
 
 // defaultRoot selects a writable, OS-native location for user installs while
@@ -103,18 +97,18 @@ func (c Config) ConfigDir() string { return filepath.Join(c.Root, "config") }
 func (c Config) APTConfigDir() string {
 	return filepath.Join(c.ConfigDir(), "apt-cacher-ng")
 }
-func (c Config) OCIConfigDir() string { return filepath.Join(c.ConfigDir(), "zot") }
-func (c Config) NPMConfigDir() string { return filepath.Join(c.ConfigDir(), "npm") }
+func (c Config) RegistryConfigDir() string { return filepath.Join(c.ConfigDir(), "registry") }
+func (c Config) NPMConfigDir() string      { return filepath.Join(c.ConfigDir(), "npm") }
 func (c Config) SupervisorConfigDir() string {
 	return filepath.Join(c.ConfigDir(), "supervisor")
 }
-func (c Config) APTDir() string { return filepath.Join(c.Root, "apt") }
-func (c Config) OCIDir() string { return filepath.Join(c.Root, "zot") }
-func (c Config) GitDir() string { return filepath.Join(c.Root, "git") }
-func (c Config) NPMDir() string { return filepath.Join(c.Root, "npm") }
-func (c Config) GoDir() string  { return filepath.Join(c.Root, "go") }
-func (c Config) LogDir() string { return filepath.Join(c.Root, "logs") }
-func (c Config) Path() string   { return filepath.Join(c.ConfigDir(), "swe-cache.toml") }
+func (c Config) APTDir() string      { return filepath.Join(c.Root, "apt") }
+func (c Config) RegistryDir() string { return filepath.Join(c.Root, "registry") }
+func (c Config) GitDir() string      { return filepath.Join(c.Root, "git") }
+func (c Config) NPMDir() string      { return filepath.Join(c.Root, "npm") }
+func (c Config) GoDir() string       { return filepath.Join(c.Root, "go") }
+func (c Config) LogDir() string      { return filepath.Join(c.Root, "logs") }
+func (c Config) Path() string        { return filepath.Join(c.ConfigDir(), "swe-cache.toml") }
 
 func (c Config) Validate() error {
 	if c.Root == "" || !filepath.IsAbs(c.Root) {
@@ -125,15 +119,6 @@ func (c Config) Validate() error {
 	}
 	if c.OCI.Enabled && c.OCI.Upstream == "" {
 		return errors.New("OCI upstream must not be empty when OCI caching is enabled")
-	}
-	if c.OCI.Enabled && c.OCI.ManifestCheckInterval == "" {
-		return errors.New("OCI manifest check interval must not be empty when OCI caching is enabled")
-	}
-	if c.OCI.Enabled {
-		interval, err := time.ParseDuration(c.OCI.ManifestCheckInterval)
-		if err != nil || interval <= 0 {
-			return fmt.Errorf("OCI manifest check interval must be a positive duration: %q", c.OCI.ManifestCheckInterval)
-		}
 	}
 	ports := map[string]struct {
 		enabled bool
@@ -164,7 +149,7 @@ func (c Config) EnsureLayout() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	for _, dir := range []string{c.Root, c.APTDir(), c.OCIDir(), c.GitDir(), c.NPMDir(), c.GoDir(), c.ConfigDir(), c.APTConfigDir(), c.OCIConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), c.LogDir()} {
+	for _, dir := range []string{c.Root, c.APTDir(), c.RegistryDir(), c.GitDir(), c.NPMDir(), c.GoDir(), c.ConfigDir(), c.APTConfigDir(), c.RegistryConfigDir(), c.NPMConfigDir(), c.SupervisorConfigDir(), c.LogDir()} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
@@ -238,10 +223,9 @@ func set(c *Config, section, key, value string) error {
 		return portValue(&c.OCI.Port)
 	case "oci.upstream":
 		c.OCI.Upstream = value
-	case "oci.tls_verify":
-		return boolValue(&c.OCI.TLSVerify)
-	case "oci.manifest_check_interval":
-		c.OCI.ManifestCheckInterval = value
+	case "oci.tls_verify", "oci.manifest_check_interval":
+		// These Zot-only settings existed in 0.3.x. Accept them when loading a
+		// durable configuration so users can upgrade without editing it first.
 	case "git.enabled":
 		return boolValue(&c.Git.Enabled)
 	case "npm.enabled":
@@ -264,6 +248,6 @@ func (c Config) Save() error {
 	if err := c.EnsureLayout(); err != nil {
 		return err
 	}
-	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\nmanifest_check_interval = %q\n\n[git]\nenabled = %t\n\n[npm]\nenabled = %t\nport = %d\n\n[go]\nenabled = %t\nport = %d\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.OCI.ManifestCheckInterval, c.Git.Enabled, c.NPM.Enabled, c.NPM.Port, c.Go.Enabled, c.Go.Port, c.Maintenance.Enabled)
+	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\n\n[git]\nenabled = %t\n\n[npm]\nenabled = %t\nport = %d\n\n[go]\nenabled = %t\nport = %d\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.Git.Enabled, c.NPM.Enabled, c.NPM.Port, c.Go.Enabled, c.Go.Port, c.Maintenance.Enabled)
 	return os.WriteFile(c.Path(), []byte(data), 0640)
 }

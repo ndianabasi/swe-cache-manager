@@ -22,7 +22,7 @@ the available build, test, E2E, and installation commands.
 | macOS | `~/Library/Caches/swe-cache` | `/Library/Caches/swe-cache` |
 | Windows | `%LocalAppData%\swe-cache` | `%LocalAppData%\swe-cache` |
 
-Each root contains `apt/`, `zot/`, `git/`, `npm/`, `go/`, `config/`, and
+Each root contains `apt/`, `registry/`, `git/`, `npm/`, `go/`, `config/`, and
 `logs/`. Removing Docker images, build cache, or the service container does
 not remove this data.
 
@@ -49,13 +49,13 @@ reliable.
 ```text
                                durable cache root
  ┌──────────────────────────────────────────────────────────────────────┐
- │ apt/       zot/        git/        npm/          go/                  │
+ │ apt/       registry/   git/        npm/          go/                  │
  │ .deb       OCI blobs   bare        npm tarballs  Go module zips,      │
  │ payloads   manifests   mirrors     metadata      .mod files, metadata │
  └────┬──────────┬───────────┬───────────┬─────────────┬─────────────────┘
       │          │           │           │             │
       ▼          ▼           ▼           ▼             ▼
- apt-cacher-ng  Zot      swe-cache     Verdaccio     Athens
+ apt-cacher-ng Distribution swe-cache   Verdaccio     Athens
       :3142    :5500     git clone       :4873        :3000
       │          │           │             │             │
  Debian/Ubuntu Docker Hub Git hosting   registry.npmjs.org proxy.golang.org
@@ -63,7 +63,8 @@ reliable.
                 upstreams
 ```
 
-`swe-cache-services` runs apt-cacher-ng, Zot, Verdaccio, and Athens under
+`swe-cache-services` runs apt-cacher-ng, CNCF Distribution, Verdaccio, and
+Athens under
 supervisord. The CLI owns generated component configuration, starts and
 recreates that container, and bind-mounts all service state from the cache
 root. Git is intentionally host-side: `swe-cache git clone` keeps bare
@@ -76,16 +77,18 @@ without adding TLS and authentication.
 | Layer | Component | Durable data | Client setting |
 | --- | --- | --- | --- |
 | APT | apt-cacher-ng | `apt/` | `Acquire::http::Proxy` |
-| OCI | Zot | `zot/` | Docker Hub `registry-mirrors` |
+| OCI | CNCF Distribution | `registry/` | Docker Hub `registry-mirrors` |
 | Git | built-in CLI | `git/` | `swe-cache git clone` |
 | npm | Verdaccio | `npm/` | npm `--registry` |
 | Go | Athens | `go/` | `GOPROXY` |
 
-The service image is paired with the CLI version. Version `0.3.0` pins Zot
-`v2.1.21`, Verdaccio `6.9.2`, and Athens `v0.18.1`. After upgrading from an
+The service image is paired with the CLI version. Version `0.4.0` pins CNCF
+Distribution `3.1.0`, Verdaccio `6.9.2`, and Athens `v0.18.1`. After upgrading from an
 older CLI, run `swe-cache init --root YOUR_CACHE_ROOT` and then
 `swe-cache restart --root YOUR_CACHE_ROOT` to select the matching image while
-retaining all durable cache directories.
+retaining all durable cache directories. The previous `zot/` directory is left
+untouched; Distribution uses its own incompatible `registry/` storage layout,
+so its cache begins cold after this one-time migration.
 
 ## Development: Linux
 
@@ -168,7 +171,7 @@ To use a different tag, provide it during initialization; that tag is built
 locally if absent:
 
 ```text
-swe-cache init --image registry.example/swe-cache-services:0.3.0
+swe-cache init --image registry.example/swe-cache-services:0.4.0
 ```
 
 ### Linux
@@ -214,9 +217,9 @@ By default this installs in `%LocalAppData%\Programs\swe-cache`, adds that
 directory to the User `Path`, and takes effect in newly opened terminals. Set
 `SWE_CACHE_INSTALL_DIR` before `task install` to override the directory.
 
-## Configure Docker Hub pulls through Zot
+## Configure Docker Hub pulls through CNCF Distribution
 
-Zot is an on-demand pull-through cache for Docker Hub. Docker's
+CNCF Distribution is a pull-through cache for Docker Hub. Docker's
 `registry-mirrors` setting is global to the Docker daemon and applies to Docker
 Hub only; it does not redirect GHCR, Quay, or other registries. Restart the
 Docker engine after changing its settings, then run `swe-cache start` again if
@@ -261,16 +264,12 @@ then select **Apply & restart**:
 cache port. Confirm the configuration with `docker info`, then run
 `swe-cache start` and `docker pull alpine:latest`.
 
-### Zot warm-cache behavior and prewarming
+### Pull-through behavior and prewarming
 
-Zot performs an on-demand mirror sync for a cold image. A multi-platform image
-can therefore take a long time on its first request, even when BuildKit only
-needs its manifest. This is expected cold-cache work, not APT activity.
-
-Version `0.3.0` uses Zot `v2.1.21`, preserves Docker manifest digests, and
-sets `manifest_check_interval = "1h"`. A warmed mutable tag is served locally
-for that interval before Zot checks its upstream again. Digest references are
-always immutable and do not need this interval.
+CNCF Distribution returns upstream image metadata immediately and caches blobs
+as Docker requests them. It avoids a full-image, multi-platform sync on a cold
+BuildKit metadata request. Tagged pulls still revalidate the upstream so
+mutable tags remain correct.
 
 Warm known evaluator bases before a time-sensitive build:
 
@@ -387,7 +386,8 @@ upstreams only. It proves each warm cache survives its upstream becoming
 unavailable:
 
 - APT serves a cached package payload after the HTTP upstream is disabled.
-- Zot serves a cached OCI manifest and blob after the local TLS registry is
+- CNCF Distribution serves a cached OCI manifest and blob after the local
+  upstream registry is
   disabled.
 - Git creates a bare mirror from a local `git daemon`, then clones again after
   that daemon is stopped.
