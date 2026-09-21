@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ndianabasi/swe-cache-manager/internal/config"
+	"github.com/ndianabasi/swe-cache-manager/internal/diagnostic"
 	"github.com/ndianabasi/swe-cache-manager/internal/gitcache"
 	"github.com/ndianabasi/swe-cache-manager/internal/service"
 )
@@ -31,6 +34,12 @@ func Run(args []string, out, errOut io.Writer) int {
 	if args[0] == "git" {
 		return gitCommand(args[1:], out, errOut)
 	}
+	if args[0] == "status" || args[0] == "doctor" || args[0] == "stats" {
+		return inspectCommand(args[0], args[1:], out, errOut)
+	}
+	if args[0] == "gc" {
+		return gcCommand(args[1:], out, errOut)
+	}
 	if isKnown(args[0]) {
 		fmt.Fprintf(errOut, "%s: not implemented yet\n", args[0])
 		return 3
@@ -38,6 +47,83 @@ func Run(args []string, out, errOut io.Writer) int {
 	fmt.Fprintf(errOut, "unknown command %q\n", args[0])
 	usage(errOut)
 	return 2
+}
+
+func inspectCommand(command string, args []string, out, errOut io.Writer) int {
+	root, ok := rootOption(args, errOut)
+	if !ok {
+		return 2
+	}
+	c, err := loadConfig(root)
+	if err != nil {
+		fmt.Fprintf(errOut, "load configuration: %v\n", err)
+		return 1
+	}
+	ctx := context.Background()
+	switch command {
+	case "status":
+		r := diagnostic.Status(ctx, c, service.CommandRunner{})
+		fmt.Fprintf(out, "service container: %s\napt-cacher-ng: %s (%s)\nzot: %s (%s)\napt endpoint: http://127.0.0.1:%d\noci endpoint: http://127.0.0.1:%d\ncache root: %s\nservice image: %s\n", r.Container, r.APT, r.Paths["apt"], r.OCI, r.Paths["oci"], c.APT.Port, c.OCI.Port, c.Root, c.Image)
+	case "doctor":
+		r := diagnostic.Doctor(ctx, c, service.CommandRunner{})
+		fmt.Fprintf(out, "docker: %s\ngit: %s\nservice container: %s\napt-cacher-ng: %s\nzot: %s\n", r.Docker, r.Git, r.Container, r.APT, r.OCI)
+		for _, name := range []string{"apt", "oci", "git"} {
+			fmt.Fprintf(out, "%s path: %s\n", name, r.Paths[name])
+		}
+		if r.Docker != "available" || r.Git != "available" {
+			return 1
+		}
+	case "stats":
+		stats, err := diagnostic.CollectStats(c)
+		if err != nil {
+			fmt.Fprintf(errOut, "collect stats: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(out, "apt bytes: %d\noci bytes: %d\ngit bytes: %d\ngit mirrors: %d\n", stats.APTBytes, stats.OCIBytes, stats.GitBytes, stats.GitMirrors)
+	}
+	return 0
+}
+
+func gcCommand(args []string, out, errOut io.Writer) int {
+	root := ""
+	if len(args) >= 2 && args[0] == "--root" {
+		root, args = args[1], args[2:]
+	}
+	if len(args) != 1 || (args[0] != "git" && args[0] != "apt" && args[0] != "oci" && args[0] != "--all") {
+		fmt.Fprintln(errOut, "usage: swe-cache gc [--root PATH] {apt|oci|git|--all}")
+		return 2
+	}
+	c, err := loadConfig(root)
+	if err != nil {
+		fmt.Fprintf(errOut, "load configuration: %v\n", err)
+		return 1
+	}
+	if args[0] == "git" || args[0] == "--all" {
+		count := 0
+		err = filepath.WalkDir(c.GitDir(), func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.IsDir() || !strings.HasSuffix(entry.Name(), ".git") {
+				return nil
+			}
+			count++
+			_, commandErr := (service.CommandRunner{}).Run(context.Background(), "git", "-C", path, "repack", "-d")
+			if commandErr != nil {
+				return fmt.Errorf("repack %s: %w", path, commandErr)
+			}
+			return filepath.SkipDir
+		})
+		if err != nil {
+			fmt.Fprintf(errOut, "gc git: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(out, "repacked %d Git mirrors; no objects were pruned\n", count)
+	}
+	if args[0] == "apt" || args[0] == "oci" || args[0] == "--all" {
+		fmt.Fprintln(out, "APT and OCI retention are service-managed; no cache entries were deleted")
+	}
+	return 0
 }
 
 func gitCommand(args []string, out, errOut io.Writer) int {
@@ -67,11 +153,7 @@ func gitCommand(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "usage: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION")
 		return 2
 	}
-	c := config.Defaults()
-	if root != "" {
-		c.Root = root
-	}
-	loaded, err := config.Load(c.Path())
+	loaded, err := loadConfig(root)
 	if err != nil {
 		fmt.Fprintf(errOut, "load configuration: %v\n", err)
 		return 1
@@ -94,11 +176,7 @@ func lifecycle(command string, args []string, out, errOut io.Writer) int {
 	if !ok {
 		return 2
 	}
-	c := config.Defaults()
-	if root != "" {
-		c.Root = root
-	}
-	loaded, err := config.Load(c.Path())
+	loaded, err := loadConfig(root)
 	if err != nil {
 		fmt.Fprintf(errOut, "load configuration: %v\n", err)
 		return 1
@@ -119,6 +197,14 @@ func lifecycle(command string, args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintf(out, "%s complete\n", command)
 	return 0
+}
+
+func loadConfig(root string) (config.Config, error) {
+	c := config.Defaults()
+	if root != "" {
+		c.Root = root
+	}
+	return config.Load(c.Path())
 }
 
 func rootOption(args []string, errOut io.Writer) (string, bool) {

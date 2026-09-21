@@ -51,7 +51,7 @@ func (m Manager) GenerateRuntimeConfig() error {
 	if err := m.Config.EnsureLayout(); err != nil {
 		return err
 	}
-	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/apt-cacher-ng\nPort: 3142\nForeGround: 1\n")
+	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: 3142\nForeGround: 1\n")
 	if err := os.WriteFile(filepath.Join(m.Config.ConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ logfile=/var/log/supervisor/supervisord.log
 pidfile=/tmp/supervisord.pid
 
 [program:apt-cacher-ng]
-command=/usr/sbin/apt-cacher-ng ForeGround=1
+command=/usr/sbin/apt-cacher-ng -c /etc/swe-cache ForeGround=1
 autorestart=true
 startretries=3
 stdout_logfile=/dev/fd/1
