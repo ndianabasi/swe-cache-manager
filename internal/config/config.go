@@ -60,11 +60,18 @@ func defaultRoot() string {
 }
 
 func (c Config) ConfigDir() string { return filepath.Join(c.Root, "config") }
-func (c Config) APTDir() string    { return filepath.Join(c.Root, "apt") }
-func (c Config) OCIDir() string    { return filepath.Join(c.Root, "zot") }
-func (c Config) GitDir() string    { return filepath.Join(c.Root, "git") }
-func (c Config) LogDir() string    { return filepath.Join(c.Root, "logs") }
-func (c Config) Path() string      { return filepath.Join(c.ConfigDir(), "swe-cache.toml") }
+func (c Config) APTConfigDir() string {
+	return filepath.Join(c.ConfigDir(), "apt-cacher-ng")
+}
+func (c Config) OCIConfigDir() string { return filepath.Join(c.ConfigDir(), "zot") }
+func (c Config) SupervisorConfigDir() string {
+	return filepath.Join(c.ConfigDir(), "supervisor")
+}
+func (c Config) APTDir() string { return filepath.Join(c.Root, "apt") }
+func (c Config) OCIDir() string { return filepath.Join(c.Root, "zot") }
+func (c Config) GitDir() string { return filepath.Join(c.Root, "git") }
+func (c Config) LogDir() string { return filepath.Join(c.Root, "logs") }
+func (c Config) Path() string   { return filepath.Join(c.ConfigDir(), "swe-cache.toml") }
 
 func (c Config) Validate() error {
 	if c.Root == "" || !filepath.IsAbs(c.Root) {
@@ -90,7 +97,7 @@ func (c Config) EnsureLayout() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	for _, dir := range []string{c.Root, c.APTDir(), c.OCIDir(), c.GitDir(), c.ConfigDir(), c.LogDir()} {
+	for _, dir := range []string{c.Root, c.APTDir(), c.OCIDir(), c.GitDir(), c.ConfigDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), c.LogDir()} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}

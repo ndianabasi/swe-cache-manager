@@ -17,14 +17,14 @@ type call struct {
 	args []string
 }
 
-func TestRuntimeZotConfigurationEnablesDigestPreservingDockerHubCache(t *testing.T) {
+func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	c := config.Defaults()
 	c.Root = t.TempDir()
 	m := Manager{Config: c}
 	if err := m.GenerateRuntimeConfig(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(c.ConfigDir(), "zot.json"))
+	b, err := os.ReadFile(filepath.Join(c.OCIConfigDir(), "zot.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +35,7 @@ func TestRuntimeZotConfigurationEnablesDigestPreservingDockerHubCache(t *testing
 	extensions := generated["extensions"].(map[string]any)
 	sync := extensions["sync"].(map[string]any)
 	registry := sync["registries"].([]any)[0].(map[string]any)
-	compatibility := generated["compatibility"].(map[string]any)["docker"].(map[string]any)
-	if registry["preserveDigest"] != true || registry["onDemand"] != true || compatibility["v2"] != true {
+	if registry["onDemand"] != true {
 		t.Fatalf("unexpected sync config: %#v", registry)
 	}
 }
@@ -76,7 +75,7 @@ func TestStartCreatesContainerWithPersistentMounts(t *testing.T) {
 		}
 	}
 	got := strings.Join(run.args, " ")
-	for _, want := range []string{c.APTDir(), c.OCIDir(), c.ConfigDir(), "127.0.0.1:3142:3142", c.Image} {
+	for _, want := range []string{c.APTDir(), c.OCIDir(), c.APTConfigDir(), c.OCIConfigDir(), c.SupervisorConfigDir(), "127.0.0.1:3142:3142", c.Image} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run arguments do not include %q: %s", want, got)
 		}

@@ -52,7 +52,7 @@ func (m Manager) GenerateRuntimeConfig() error {
 		return err
 	}
 	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: 3142\nForeGround: 1\n")
-	if err := os.WriteFile(filepath.Join(m.Config.ConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
+	if err := os.WriteFile(filepath.Join(m.Config.APTConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
 		return err
 	}
 	zot, err := json.MarshalIndent(map[string]any{
@@ -60,24 +60,21 @@ func (m Manager) GenerateRuntimeConfig() error {
 		"storage":         map[string]any{"rootDirectory": "/var/lib/zot", "gc": true, "dedupe": true},
 		"http":            map[string]any{"address": "0.0.0.0", "port": "5000"},
 		"log":             map[string]any{"level": "info"},
-		"compatibility":   map[string]any{"docker": map[string]any{"v2": true}},
 		// Docker Hub is the one registry Docker can transparently use through
 		// its registry-mirrors setting. Other upstreams need explicit
 		// registry-host mapping, so they are intentionally not guessed here.
 		"extensions": map[string]any{"sync": map[string]any{
 			"enable": true,
 			"registries": []map[string]any{{
-				"urls":                  []string{"https://registry-1.docker.io"},
-				"onDemand":              true,
-				"preserveDigest":        true,
-				"manifestCheckInterval": "1h",
+				"urls":     []string{"https://registry-1.docker.io"},
+				"onDemand": true,
 			}},
 		}},
 	}, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(m.Config.ConfigDir(), "zot.json"), append(zot, '\n'), 0640); err != nil {
+	if err := os.WriteFile(filepath.Join(m.Config.OCIConfigDir(), "zot.json"), append(zot, '\n'), 0640); err != nil {
 		return err
 	}
 	supervisor := `[supervisord]
@@ -86,7 +83,7 @@ logfile=/var/log/supervisor/supervisord.log
 pidfile=/tmp/supervisord.pid
 
 [program:apt-cacher-ng]
-command=/usr/sbin/apt-cacher-ng -c /etc/swe-cache ForeGround=1
+command=/usr/sbin/apt-cacher-ng -c /etc/apt-cacher-ng ForeGround=1
 autorestart=true
 startretries=3
 stdout_logfile=/dev/fd/1
@@ -101,7 +98,7 @@ stdout_logfile=/dev/fd/1
 stdout_logfile_maxbytes=0
 redirect_stderr=true
 `
-	return os.WriteFile(filepath.Join(m.Config.ConfigDir(), "supervisord.conf"), []byte(supervisor), 0640)
+	return os.WriteFile(filepath.Join(m.Config.SupervisorConfigDir(), "swe-cache.conf"), []byte(supervisor), 0640)
 }
 
 func (m Manager) Start(ctx context.Context) error {
@@ -138,7 +135,9 @@ func (m Manager) Start(ctx context.Context) error {
 	args = append(args,
 		"--mount", "type=bind,src="+m.Config.APTDir()+",dst=/var/cache/apt-cacher-ng",
 		"--mount", "type=bind,src="+m.Config.OCIDir()+",dst=/var/lib/zot",
-		"--mount", "type=bind,src="+m.Config.ConfigDir()+",dst=/etc/swe-cache,readonly",
+		"--mount", "type=bind,src="+m.Config.APTConfigDir()+",dst=/etc/apt-cacher-ng,readonly",
+		"--mount", "type=bind,src="+m.Config.OCIConfigDir()+",dst=/etc/swe-cache,readonly",
+		"--mount", "type=bind,src="+m.Config.SupervisorConfigDir()+",dst=/etc/supervisor/conf.d,readonly",
 		"--mount", "type=bind,src="+m.Config.LogDir()+",dst=/var/log/swe-cache",
 		m.Config.Image,
 	)
@@ -170,7 +169,7 @@ func (m Manager) Remove(ctx context.Context) error {
 }
 
 func (m Manager) Restart(ctx context.Context) error {
-	if err := m.Stop(ctx); err != nil {
+	if err := m.Remove(ctx); err != nil {
 		return err
 	}
 	return m.Start(ctx)
