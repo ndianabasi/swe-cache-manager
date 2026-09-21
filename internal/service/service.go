@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"text/template"
 
 	"github.com/ndianabasi/swe-cache-manager/internal/config"
 )
@@ -130,44 +131,30 @@ listen: 0.0.0.0:%d
 	if err := os.WriteFile(filepath.Join(m.Config.NPMConfigDir(), "verdaccio.yaml"), []byte(npm), 0640); err != nil {
 		return err
 	}
-	supervisor := fmt.Sprintf(`[supervisord]
-nodaemon=true
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/tmp/supervisord.pid
+	supervisor, err := renderSupervisorConfig(m.Config.Go.Port)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(m.Config.SupervisorConfigDir(), "swe-cache.conf"), supervisor, 0640)
+}
 
-[program:apt-cacher-ng]
-command=/usr/sbin/apt-cacher-ng -c /etc/apt-cacher-ng ForeGround=1
-autorestart=true
-startretries=3
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-redirect_stderr=true
+type supervisorTemplateData struct {
+	GoPort int
+}
 
-[program:verdaccio]
-command=/usr/local/bin/verdaccio --config /etc/swe-cache/npm/verdaccio.yaml
-autorestart=true
-startretries=3
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-redirect_stderr=true
-
-[program:athens]
-command=/bin/sh -ec 'export ATHENS_STORAGE_TYPE=disk ATHENS_DISK_STORAGE_ROOT=/var/lib/athens ATHENS_PORT=:%d ATHENS_GO_BINARY_ENV_VARS="GOPROXY=https://proxy.golang.org,direct" ATHENS_LOG_LEVEL=warn; exec /usr/local/bin/athens-proxy'
-autorestart=true
-startretries=3
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-redirect_stderr=true
-
-[program:zot]
-command=/usr/local/bin/zot serve /etc/swe-cache/zot.json
-autorestart=true
-startretries=3
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-redirect_stderr=true
-`, m.Config.Go.Port)
-	return os.WriteFile(filepath.Join(m.Config.SupervisorConfigDir(), "swe-cache.conf"), []byte(supervisor), 0640)
+// renderSupervisorConfig is shared by runtime configuration generation and
+// the Dockerfile's default rendering. The template asset is the only source of
+// supervisord program definitions; callers supply just the host-selected port.
+func renderSupervisorConfig(goPort int) ([]byte, error) {
+	tmpl, err := template.New("supervisord.conf").Option("missingkey=error").Parse(string(embeddedSupervisorConfig))
+	if err != nil {
+		return nil, fmt.Errorf("parse supervisord template: %w", err)
+	}
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, supervisorTemplateData{GoPort: goPort}); err != nil {
+		return nil, fmt.Errorf("render supervisord template: %w", err)
+	}
+	return rendered.Bytes(), nil
 }
 
 func (m Manager) Start(ctx context.Context) error {

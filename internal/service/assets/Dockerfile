@@ -18,5 +18,7 @@ COPY --from=zot /usr/local/bin/zot-linux-${TARGETARCH} /usr/local/bin/zot
 COPY --from=athens /go/bin/proxy /usr/local/bin/athens-proxy
 COPY --from=athens /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"
-COPY supervisord.conf /etc/supervisor/conf.d/swe-cache.conf
+COPY supervisord.conf /tmp/supervisord.conf.tmpl
+RUN node -e 'const fs = require("fs"); const source = fs.readFileSync("/tmp/supervisord.conf.tmpl", "utf8"); if (!source.includes("{{ .GoPort }}")) throw new Error("missing GoPort template value"); fs.writeFileSync("/etc/supervisor/conf.d/swe-cache.conf", source.replaceAll("{{ .GoPort }}", "3000"));' \
+    && rm /tmp/supervisord.conf.tmpl
 ENTRYPOINT ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/swe-cache.conf"]

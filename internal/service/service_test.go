@@ -57,6 +57,9 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	if !strings.Contains(string(supervisor), "ATHENS_STORAGE_TYPE=disk") || !strings.Contains(string(supervisor), fmt.Sprintf("ATHENS_PORT=:%d", c.Go.Port)) {
 		t.Fatalf("unexpected Athens configuration:\n%s", supervisor)
 	}
+	if strings.Contains(string(supervisor), "{{ .GoPort }}") {
+		t.Fatalf("unrendered supervisord template:\n%s", supervisor)
+	}
 }
 
 type fakeRunner struct {
@@ -170,5 +173,8 @@ func TestEnsureImageDoesNotRebuildExistingTag(t *testing.T) {
 func TestEmbeddedBuildContextIsPresent(t *testing.T) {
 	if len(embeddedDockerfile) == 0 || len(embeddedSupervisorConfig) == 0 {
 		t.Fatal("embedded service build context is empty")
+	}
+	if !strings.Contains(string(embeddedSupervisorConfig), "{{ .GoPort }}") {
+		t.Fatal("embedded supervisor asset is not a Go template")
 	}
 }
