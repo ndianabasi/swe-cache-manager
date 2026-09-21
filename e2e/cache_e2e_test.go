@@ -98,14 +98,14 @@ func TestOCIPullThroughServesManifestAndBlobAfterUpstreamIsOffline(t *testing.T)
 	cache := startCache(t, upstream)
 	client := &http.Client{Timeout: 15 * time.Second}
 	base := fmt.Sprintf("http://127.0.0.1:%d/v2/example", cache.Config.OCI.Port)
-	if got := getBody(t, client, base+"/manifests/latest"); !bytes.Equal(got, manifest) {
+	if got := getOCIManifest(t, client, base+"/manifests/latest"); !bytes.Equal(got, manifest) {
 		t.Fatalf("unexpected first manifest: %s", got)
 	}
 	if got := getBody(t, client, base+"/blobs/"+configDigest); !bytes.Equal(got, configBlob) {
 		t.Fatalf("unexpected first blob: %s", got)
 	}
 	online.Store(false)
-	if got := getBody(t, client, base+"/manifests/"+manifestDigest); !bytes.Equal(got, manifest) {
+	if got := getOCIManifest(t, client, base+"/manifests/"+manifestDigest); !bytes.Equal(got, manifest) {
 		t.Fatalf("cached manifest was unavailable after upstream shutdown: %s", got)
 	}
 	if got := getBody(t, client, base+"/blobs/"+configDigest); !bytes.Equal(got, configBlob) {
@@ -167,6 +167,8 @@ func startCache(t *testing.T, upstream string) service.Manager {
 	c.Image = image
 	c.APT.Port = freePort(t)
 	c.OCI.Port = freePort(t)
+	c.NPM.Port = freePort(t)
+	c.Go.Port = freePort(t)
 	c.OCI.Upstream = upstream
 	manager := service.Manager{Config: c, Name: fmt.Sprintf("swe-cache-e2e-%d", time.Now().UnixNano())}
 	if err := manager.Start(context.Background()); err != nil {
@@ -280,9 +282,28 @@ func hostCertificate(t *testing.T) (tls.Certificate, *tlsMaterial) {
 
 func getBody(t *testing.T, client *http.Client, rawURL string) []byte {
 	t.Helper()
-	response, err := client.Get(rawURL)
+	request, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
-		t.Fatalf("GET %s: %v", rawURL, err)
+		t.Fatal(err)
+	}
+	return getRequestBody(t, client, request)
+}
+
+func getOCIManifest(t *testing.T, client *http.Client, rawURL string) []byte {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json")
+	return getRequestBody(t, client, request)
+}
+
+func getRequestBody(t *testing.T, client *http.Client, request *http.Request) []byte {
+	t.Helper()
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("GET %s: %v", request.URL, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
@@ -290,7 +311,7 @@ func getBody(t *testing.T, client *http.Client, rawURL string) []byte {
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s: status %s: %s", rawURL, response.Status, body)
+		t.Fatalf("GET %s: status %s: %s", request.URL, response.Status, body)
 	}
 	return body
 }

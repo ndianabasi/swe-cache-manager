@@ -400,12 +400,17 @@ Run the suite with:
 SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 ```
 
-The suite builds the requested service image if it is missing, starts isolated
-containers for the service-cache cases, and removes those containers
-afterwards; it does not use or alter the regular `swe-cache-services`
-container. Set
-`SWE_CACHE_E2E_IMAGE` if the service image uses a different reference. The
-suite needs Docker, Git, and an available local port range `18001–23999`.
+For normal development, prefer `task test:e2e`: it always runs `docker build`
+against the current embedded-service source before testing and passes its
+dedicated `swe-cache-services:e2e` tag to the suite. Docker may reuse unchanged
+layers, but Dockerfile and service-asset changes are rebuilt before the tests
+start. The suite starts isolated containers and removes them afterwards; it
+does not use or alter the regular `swe-cache-services` container. The direct Go
+command only builds a requested service image when it is missing; set
+`SWE_CACHE_E2E_IMAGE` to choose that image reference. The suite needs Docker,
+Git, and an available local port range `18001–23999`. Each E2E service
+container gets its own random loopback ports for APT, CNCF Distribution, npm,
+and Go, so it does not conflict with a regular `swe-cache-services` container.
 
 ## Normal use
 
