@@ -11,10 +11,7 @@ import (
 	"strings"
 )
 
-const (
-	DefaultRoot  = "/var/lib/swe-cache"
-	DefaultImage = "ghcr.io/ndianabasi/swe-cache-services:0.1.0"
-)
+const DefaultImage = "ghcr.io/ndianabasi/swe-cache-services:0.1.0"
 
 // Config is deliberately a small, stable top-level configuration. The cache
 // owns generated apt-cacher-ng, zot, and supervisord files below Root/config.
@@ -41,13 +38,25 @@ type MaintenanceConfig struct{ Enabled bool }
 func Defaults() Config {
 	root := os.Getenv("SWE_CACHE_ROOT")
 	if root == "" {
-		root = DefaultRoot
+		root = defaultRoot()
 	}
 	image := os.Getenv("SWE_CACHE_IMAGE")
 	if image == "" {
 		image = DefaultImage
 	}
 	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: 3142}, OCI: OCIConfig{Enabled: true, Port: 5000}, Git: GitConfig{Enabled: true}}
+}
+
+// defaultRoot supports a root-managed Linux installation while keeping the
+// portable binary usable by an unprivileged user (notably on macOS).
+func defaultRoot() string {
+	if os.Geteuid() == 0 {
+		return "/var/lib/swe-cache"
+	}
+	if root, err := os.UserCacheDir(); err == nil && root != "" {
+		return filepath.Join(root, "swe-cache")
+	}
+	return "/var/lib/swe-cache"
 }
 
 func (c Config) ConfigDir() string { return filepath.Join(c.Root, "config") }

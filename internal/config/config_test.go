@@ -34,3 +34,9 @@ func TestRejectsRelativeRoot(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestDefaultsUseAnAbsoluteRoot(t *testing.T) {
+	if !filepath.IsAbs(Defaults().Root) {
+		t.Fatalf("default root is not absolute: %q", Defaults().Root)
+	}
+}

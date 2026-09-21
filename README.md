@@ -1,8 +1,10 @@
 # swe-cache
 
 `swe-cache` is a single Go executable that keeps APT packages, OCI registry
-content, and Git mirrors outside Docker. The service container is disposable;
-the persistent cache root defaults to `/var/lib/swe-cache`.
+content, and Git mirrors outside Docker. The service container is disposable.
+Root-managed installations use `/var/lib/swe-cache`; unprivileged installs use
+the platform user cache directory (for example, `~/Library/Caches/swe-cache` on
+macOS).
 
 ```text
 /var/lib/swe-cache/{apt,zot,git,config,logs}
