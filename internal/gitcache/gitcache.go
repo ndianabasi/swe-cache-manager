@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,10 +22,20 @@ type Runner interface {
 	Run(context.Context, string, ...string) (string, error)
 }
 
+// StreamingRunner is implemented by command runners that can forward a
+// command's output before it exits. Manager still accepts a Runner so callers
+// with a non-streaming programmatic runner remain supported.
+type StreamingRunner interface {
+	RunStream(context.Context, io.Writer, io.Writer, string, ...string) error
+}
+
 type Manager struct {
-	Root     string
-	Runner   Runner
-	LockWait time.Duration
+	Root        string
+	Runner      Runner
+	LockWait    time.Duration
+	ForceLock   bool
+	Output      io.Writer
+	ErrorOutput io.Writer
 }
 
 func (m Manager) lockWait() time.Duration {
@@ -89,7 +100,7 @@ func (m Manager) Clone(ctx context.Context, repository, destination, commit stri
 	if err := os.MkdirAll(filepath.Dir(mirror), 0750); err != nil {
 		return fmt.Errorf("create mirror parent: %w", err)
 	}
-	unlock, err := acquireLock(mirror+".lock", m.lockWait())
+	unlock, err := acquireLock(ctx, mirror+".lock", m.lockWait(), m.ForceLock)
 	if err != nil {
 		return err
 	}
@@ -116,7 +127,7 @@ func (m Manager) Clone(ctx context.Context, repository, destination, commit stri
 	}
 	// --no-local makes an independent clone rather than a hardlinked or
 	// alternate-object clone. Later mirror maintenance cannot break workspaces.
-	if _, err := m.Runner.Run(ctx, "git", "clone", "--no-local", mirror, destination); err != nil {
+	if err := m.runClone(ctx, "--no-local", mirror, destination); err != nil {
 		return fmt.Errorf("clone cached mirror: %w", err)
 	}
 	if _, err := m.Runner.Run(ctx, "git", "-C", destination, "remote", "set-url", "origin", repository); err != nil {
@@ -133,7 +144,7 @@ func (m Manager) Clone(ctx context.Context, repository, destination, commit stri
 func (m Manager) createMirror(ctx context.Context, repository, mirror string) error {
 	temporary := mirror + ".partial-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	defer os.RemoveAll(temporary)
-	if _, err := m.Runner.Run(ctx, "git", "clone", "--mirror", repository, temporary); err != nil {
+	if err := m.runClone(ctx, "--mirror", repository, temporary); err != nil {
 		return fmt.Errorf("create mirror: %w", err)
 	}
 	if err := os.Rename(temporary, mirror); err != nil {
@@ -147,9 +158,38 @@ func (m Manager) hasCommit(ctx context.Context, mirror, commit string) bool {
 	return err == nil
 }
 
-func acquireLock(path string, wait time.Duration) (func(), error) {
+func (m Manager) runClone(ctx context.Context, args ...string) error {
+	// Git suppresses its useful progress meter when stderr is not a terminal;
+	// --progress makes it visible through pipes and captured CLI output too.
+	args = append([]string{"clone", "--progress"}, args...)
+	if runner, ok := m.Runner.(StreamingRunner); ok {
+		return runner.RunStream(ctx, m.output(), m.errorOutput(), "git", args...)
+	}
+	output, err := m.Runner.Run(ctx, "git", args...)
+	_, _ = fmt.Fprint(m.output(), output)
+	return err
+}
+
+func (m Manager) output() io.Writer {
+	if m.Output != nil {
+		return m.Output
+	}
+	return io.Discard
+}
+
+func (m Manager) errorOutput() io.Writer {
+	if m.ErrorOutput != nil {
+		return m.ErrorOutput
+	}
+	return io.Discard
+}
+
+func acquireLock(ctx context.Context, path string, wait time.Duration, force bool) (func(), error) {
 	deadline := time.Now().Add(wait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		err := os.Mkdir(path, 0700)
 		if err == nil {
 			return func() { _ = os.Remove(path) }, nil
@@ -157,9 +197,23 @@ func acquireLock(path string, wait time.Duration) (func(), error) {
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("create repository lock: %w", err)
 		}
+		if force {
+			// Remove only the lock observed when --force was requested. A new
+			// lock that appears afterwards is treated normally, so the flag
+			// cannot repeatedly disrupt a concurrently-started clone.
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove stale repository lock: %w", err)
+			}
+			force = false
+			continue
+		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("timed out waiting for repository lock: %s", path)
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }

@@ -18,13 +18,23 @@ import (
 const Version = "0.1.0"
 
 func Run(args []string, out, errOut io.Writer) int {
-	return RunWithReadme(args, out, errOut, "")
+	return runWithReadme(context.Background(), args, out, errOut, "")
 }
 
 // RunWithReadme handles a command and supplies the documentation embedded by
 // the executable's top-level package. Keeping the CLI package independent of
 // the repository root makes its command parsing directly testable.
 func RunWithReadme(args []string, out, errOut io.Writer, readme string) int {
+	return runWithReadme(context.Background(), args, out, errOut, readme)
+}
+
+// RunWithReadmeContext handles a command with cancellation support. The
+// executable uses it so Ctrl-C cancels Git cleanly and releases its cache lock.
+func RunWithReadmeContext(ctx context.Context, args []string, out, errOut io.Writer, readme string) int {
+	return runWithReadme(ctx, args, out, errOut, readme)
+}
+
+func runWithReadme(ctx context.Context, args []string, out, errOut io.Writer, readme string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		usage(out)
 		return 0
@@ -63,7 +73,7 @@ func RunWithReadme(args []string, out, errOut io.Writer, readme string) int {
 		return lifecycle(args[0], args[1:], out, errOut)
 	}
 	if args[0] == "git" {
-		return gitCommand(args[1:], out, errOut)
+		return gitCommand(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "status" || args[0] == "doctor" || args[0] == "stats" {
 		if asksForHelp(args[1:]) {
@@ -165,26 +175,35 @@ func gcCommand(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-func gitCommand(args []string, out, errOut io.Writer) int {
+func gitCommand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || asksForHelp(args) || (args[0] == "clone" && asksForHelp(args[1:])) {
 		gitCloneUsage(out)
 		return 0
 	}
 	if args[0] != "clone" {
-		fmt.Fprintln(errOut, "unknown git command; use: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION")
+		fmt.Fprintln(errOut, "unknown git command; use: swe-cache git clone [--root PATH] [--commit SHA] [--force] URL DESTINATION")
 		return 2
 	}
 	args = args[1:]
 	root, commit := "", ""
+	force := false
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
-		if len(args) < 2 {
-			fmt.Fprintf(errOut, "%s requires a value\n", args[0])
-			return 2
-		}
 		switch args[0] {
+		case "--force":
+			force = true
+			args = args[1:]
+			continue
 		case "--root":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--root requires a value")
+				return 2
+			}
 			root = args[1]
 		case "--commit":
+			if len(args) < 2 {
+				fmt.Fprintln(errOut, "--commit requires a value")
+				return 2
+			}
 			commit = args[1]
 		default:
 			fmt.Fprintf(errOut, "unknown git clone option %q\n", args[0])
@@ -193,7 +212,7 @@ func gitCommand(args []string, out, errOut io.Writer) int {
 		args = args[2:]
 	}
 	if len(args) != 2 {
-		fmt.Fprintln(errOut, "usage: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION")
+		fmt.Fprintln(errOut, "usage: swe-cache git clone [--root PATH] [--commit SHA] [--force] URL DESTINATION")
 		return 2
 	}
 	loaded, err := loadConfig(root)
@@ -205,8 +224,14 @@ func gitCommand(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "Git caching is disabled in configuration")
 		return 1
 	}
-	m := gitcache.Manager{Root: loaded.GitDir(), Runner: service.CommandRunner{}}
-	if err := m.Clone(context.Background(), args[0], args[1], commit); err != nil {
+	m := gitcache.Manager{
+		Root:        loaded.GitDir(),
+		Runner:      service.CommandRunner{},
+		ForceLock:   force,
+		Output:      out,
+		ErrorOutput: errOut,
+	}
+	if err := m.Clone(ctx, args[0], args[1], commit); err != nil {
 		fmt.Fprintf(errOut, "git clone: %v\n", err)
 		return 1
 	}
@@ -487,19 +512,24 @@ Examples:
 }
 
 func gitCloneUsage(out io.Writer) {
-	fmt.Fprint(out, `Usage: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION
+	fmt.Fprint(out, `Usage: swe-cache git clone [--root PATH] [--commit SHA] [--force] URL DESTINATION
 
 Creates or reuses a host-side bare mirror, then clones from that mirror. The
 destination receives the original URL as its origin. With --commit, swe-cache
 checks the mirror first and contacts the upstream only if that commit is absent.
+Git clone progress is streamed while the mirror and destination are created.
 
 Options:
   --root PATH                         cache root containing Git mirrors
   --commit SHA                        require and check out a specific commit
+  --force                             remove one existing stale repository lock
+
+Use --force only after confirming that no clone for the repository is active.
 
 Examples:
   swe-cache git clone https://github.com/acme/project.git ./project
   swe-cache git clone --commit 0123abcd https://github.com/acme/project.git ./project
+  swe-cache git clone --force https://github.com/acme/project.git ./project
   swe-cache git clone --root /srv/swe-cache git@github.com:acme/project.git ./project
 `)
 }

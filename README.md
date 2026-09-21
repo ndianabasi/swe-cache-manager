@@ -298,5 +298,11 @@ swe-cache stop [--root PATH]
 swe-cache restart [--root PATH] [--apt-port PORT] [--oci-port PORT]
 swe-cache status [--root PATH]
 swe-cache doctor [--root PATH]
-swe-cache git clone [--commit SHA] URL DESTINATION
+swe-cache git clone [--commit SHA] [--force] URL DESTINATION
 ```
+
+`swe-cache git clone` streams Git's progress while it creates a mirror or
+clones from an existing mirror. Ctrl-C cancels the Git command and releases
+the repository lock. If a prior process was forcibly terminated and left a
+stale lock, use `--force` only after confirming no clone for that repository is
+active.

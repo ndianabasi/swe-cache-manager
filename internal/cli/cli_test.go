@@ -43,6 +43,16 @@ func TestGitCloneHelpIncludesCommitExample(t *testing.T) {
 	}
 }
 
+func TestGitCloneForceIsAValuelessOption(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"git", "clone", "--force"}, &out, &errOut); code != 2 {
+		t.Fatalf("code = %d, stderr %s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "requires a value") || !strings.Contains(errOut.String(), "usage:") {
+		t.Fatalf("unexpected force parsing error: %s", errOut.String())
+	}
+}
+
 func TestReadmeFlagPrintsEmbeddedDocumentation(t *testing.T) {
 	var out, errOut bytes.Buffer
 	const readme = "# swe-cache\n\nEmbedded documentation.\n"

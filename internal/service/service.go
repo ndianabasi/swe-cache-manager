@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,18 @@ func (CommandRunner) Run(ctx context.Context, name string, args ...string) (stri
 		return output.String(), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return output.String(), nil
+}
+
+// RunStream connects a command directly to the supplied writers. It is useful
+// for long-running, user-initiated commands whose progress should be visible
+// while the command is still running.
+func (CommandRunner) RunStream(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return nil
 }
 
 type Manager struct {
