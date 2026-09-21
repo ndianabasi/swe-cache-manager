@@ -127,20 +127,8 @@ func TestEnsureImageDoesNotRebuildExistingTag(t *testing.T) {
 	}
 }
 
-func TestEmbeddedBuildContextMatchesDevelopmentFiles(t *testing.T) {
-	for embedded, source := range map[string]string{
-		"assets/Dockerfile": "../../services/Dockerfile", "assets/supervisord.conf": "../../services/supervisord.conf",
-	} {
-		got, err := os.ReadFile(embedded)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want, err := os.ReadFile(source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Errorf("embedded %s differs from %s", embedded, source)
-		}
+func TestEmbeddedBuildContextIsPresent(t *testing.T) {
+	if len(embeddedDockerfile) == 0 || len(embeddedSupervisorConfig) == 0 {
+		t.Fatal("embedded service build context is empty")
 	}
 }

@@ -108,8 +108,8 @@ The default root is `%LocalAppData%\swe-cache`. To use another drive:
 the image is absent, builds it using the pinned Dockerfile and supervisord
 configuration embedded in the binary. An installed executable therefore works
 outside a source checkout. It never rebuilds an image whose requested tag is
-already local. `services/` retains the same build context for review and
-manual Docker builds; tests enforce that it matches the embedded files.
+already local. The canonical, reviewable build context is
+`internal/service/assets/`; it is embedded directly at compile time.
 
 To use a different tag, provide it during initialization; that tag is built
 locally if absent:
