@@ -1,8 +1,9 @@
 # swe-cache
 
-`swe-cache` is a portable Go CLI that keeps APT packages, OCI registry content,
-and Git mirrors outside Docker. Its Docker service container is disposable; the
-cache root is the durable state.
+`swe-cache` is a portable Go CLI that keeps five dependency caches outside
+Docker: APT packages, OCI registry content, Git mirrors, npm packages, and Go
+modules. Its Docker service container is disposable; the cache root is the
+durable state.
 
 It supports Linux, macOS, and Windows hosts. The service image is Linux, so
 Docker Desktop must use Linux containers on macOS and Windows. Every platform
@@ -21,20 +22,70 @@ the available build, test, E2E, and installation commands.
 | macOS | `~/Library/Caches/swe-cache` | `/Library/Caches/swe-cache` |
 | Windows | `%LocalAppData%\swe-cache` | `%LocalAppData%\swe-cache` |
 
-Each root contains `apt/`, `zot/`, `git/`, `config/`, and `logs/`. Removing
-Docker images, build cache, or the service container does not remove this data.
+Each root contains `apt/`, `zot/`, `git/`, `npm/`, `go/`, `config/`, and
+`logs/`. Removing Docker images, build cache, or the service container does
+not remove this data.
 
 The APT proxy defaults to apt-cacher-ng's established port `3142`. The OCI
-registry defaults to `5500`, avoiding common development ports. Ports configure
-both the listener inside the service container and Docker's localhost mapping.
+registry defaults to `5500`, npm registry to `4873`, and Go module proxy to
+`3000`. Ports configure both the listener inside the service container and
+Docker's localhost mapping.
 
 ```text
-swe-cache init --apt-port 3142 --oci-port 5500
+swe-cache init --apt-port 3142 --oci-port 5500 --npm-port 4873 --go-port 3000
 swe-cache restart --oci-port 5510
 ```
 
 `start` and `restart` persist supplied port flags in `config/swe-cache.toml`.
 Use `swe-cache status` to display the active endpoints.
+
+## Architecture
+
+The cache deliberately uses protocol-aware components rather than a generic
+HTTP proxy. Each protocol has different identity, freshness, and integrity
+rules; keeping those concerns separate makes cache misses safe and warm hits
+reliable.
+
+```text
+                               durable cache root
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │ apt/       zot/        git/        npm/          go/                  │
+ │ .deb       OCI blobs   bare        npm tarballs  Go module zips,      │
+ │ payloads   manifests   mirrors     metadata      .mod files, metadata │
+ └────┬──────────┬───────────┬───────────┬─────────────┬─────────────────┘
+      │          │           │           │             │
+      ▼          ▼           ▼           ▼             ▼
+ apt-cacher-ng  Zot      swe-cache     Verdaccio     Athens
+      :3142    :5500     git clone       :4873        :3000
+      │          │           │             │             │
+ Debian/Ubuntu Docker Hub Git hosting   registry.npmjs.org proxy.golang.org
+ mirrors       and OCI    (on demand)   (on demand)      or VCS
+                upstreams
+```
+
+`swe-cache-services` runs apt-cacher-ng, Zot, Verdaccio, and Athens under
+supervisord. The CLI owns generated component configuration, starts and
+recreates that container, and bind-mounts all service state from the cache
+root. Git is intentionally host-side: `swe-cache git clone` keeps bare
+mirrors locally and clones from them without a Git server.
+
+All service ports bind to `127.0.0.1` on the host. They are intentionally
+unauthenticated local developer services; do not expose them to a network
+without adding TLS and authentication.
+
+| Layer | Component | Durable data | Client setting |
+| --- | --- | --- | --- |
+| APT | apt-cacher-ng | `apt/` | `Acquire::http::Proxy` |
+| OCI | Zot | `zot/` | Docker Hub `registry-mirrors` |
+| Git | built-in CLI | `git/` | `swe-cache git clone` |
+| npm | Verdaccio | `npm/` | npm `--registry` |
+| Go | Athens | `go/` | `GOPROXY` |
+
+The service image is paired with the CLI version. Version `0.3.0` pins Zot
+`v2.1.21`, Verdaccio `6.9.2`, and Athens `v0.18.1`. After upgrading from an
+older CLI, run `swe-cache init --root YOUR_CACHE_ROOT` and then
+`swe-cache restart --root YOUR_CACHE_ROOT` to select the matching image while
+retaining all durable cache directories.
 
 ## Development: Linux
 
@@ -117,7 +168,7 @@ To use a different tag, provide it during initialization; that tag is built
 locally if absent:
 
 ```text
-swe-cache init --image registry.example/swe-cache-services:0.1.0
+swe-cache init --image registry.example/swe-cache-services:0.3.0
 ```
 
 ### Linux
@@ -210,6 +261,28 @@ then select **Apply & restart**:
 cache port. Confirm the configuration with `docker info`, then run
 `swe-cache start` and `docker pull alpine:latest`.
 
+### Zot warm-cache behavior and prewarming
+
+Zot performs an on-demand mirror sync for a cold image. A multi-platform image
+can therefore take a long time on its first request, even when BuildKit only
+needs its manifest. This is expected cold-cache work, not APT activity.
+
+Version `0.3.0` uses Zot `v2.1.21`, preserves Docker manifest digests, and
+sets `manifest_check_interval = "1h"`. A warmed mutable tag is served locally
+for that interval before Zot checks its upstream again. Digest references are
+always immutable and do not need this interval.
+
+Warm known evaluator bases before a time-sensitive build:
+
+```sh
+swe-cache oci warm node:24-bookworm docker/dockerfile:1.7
+```
+
+This runs ordinary Docker pulls through the configured Docker Hub mirror, so
+it follows the same path as BuildKit while moving the initial sync outside the
+build's critical path. It requires the Docker Engine `registry-mirrors`
+configuration above.
+
 ## Selectively use the APT cache in a Dockerfile
 
 APT proxying is opt-in per build. Add build arguments and create the temporary
@@ -251,6 +324,48 @@ is removed in the same Dockerfile layer, so it is not present in the final
 image. HTTPS sources can use the proxy as a CONNECT tunnel; use HTTP Debian or
 Ubuntu mirrors when actual HTTPS package-response caching is required.
 
+## Use the npm cache in a Dockerfile
+
+Verdaccio is an on-demand cache in front of `https://registry.npmjs.org/`.
+Point npm at it for installs; npm lockfile integrity checks remain in force.
+
+```dockerfile
+ARG USE_SWE_CACHE=0
+ARG SWE_CACHE_NPM_REGISTRY=http://host.docker.internal:4873
+
+RUN if [ "$USE_SWE_CACHE" = "1" ]; then \
+      npm ci --registry="$SWE_CACHE_NPM_REGISTRY"; \
+    else \
+      npm ci; \
+    fi
+```
+
+On Linux, use `docker build --network=host` and replace the endpoint with
+`http://127.0.0.1:4873`, as with the APT example. The registry setting is
+passed to this one install and is not written into the final image.
+
+## Use the Go module cache in a Dockerfile
+
+Athens implements the Go module proxy protocol and persists fetched module
+versions in `go/`. Set `GOPROXY` for dependency download steps:
+
+```dockerfile
+ARG USE_SWE_CACHE=0
+ARG SWE_CACHE_GO_PROXY=http://host.docker.internal:3000
+
+COPY go.mod go.sum ./
+RUN if [ "$USE_SWE_CACHE" = "1" ]; then \
+      GOPROXY="$SWE_CACHE_GO_PROXY" go mod download; \
+    else \
+      go mod download; \
+    fi
+```
+
+The Go checksum database remains an independent integrity authority; preserve
+your project-specific `GOPRIVATE`, `GONOSUMDB`, and credential configuration
+for private modules. On Linux use host networking and
+`http://127.0.0.1:3000`.
+
 ## Cross-compiling release binaries
 
 Go can produce the CLI for supported architectures without a target host. The
@@ -276,6 +391,8 @@ unavailable:
   disabled.
 - Git creates a bare mirror from a local `git daemon`, then clones again after
   that daemon is stopped.
+- Verdaccio and Athens are started, health-checked, and use their bind-mounted
+  durable storage in the same isolated service container.
 
 Run the suite with:
 
@@ -284,8 +401,9 @@ SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 ```
 
 The suite builds the requested service image if it is missing, starts isolated
-containers for the APT and OCI cases, and removes those containers afterwards;
-it does not use or alter the regular `swe-cache-services` container. Set
+containers for the service-cache cases, and removes those containers
+afterwards; it does not use or alter the regular `swe-cache-services`
+container. Set
 `SWE_CACHE_E2E_IMAGE` if the service image uses a different reference. The
 suite needs Docker, Git, and an available local port range `18001–23999`.
 
@@ -293,12 +411,13 @@ suite needs Docker, Git, and an available local port range `18001–23999`.
 
 ```text
 swe-cache --readme
-swe-cache start [--root PATH] [--apt-port PORT] [--oci-port PORT]
+swe-cache start [--root PATH] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
 swe-cache stop [--root PATH]
-swe-cache restart [--root PATH] [--apt-port PORT] [--oci-port PORT]
+swe-cache restart [--root PATH] [--apt-port PORT] [--oci-port PORT] [--npm-port PORT] [--go-port PORT]
 swe-cache status [--root PATH]
 swe-cache doctor [--root PATH]
 swe-cache git clone [--commit SHA] [--force] URL DESTINATION
+swe-cache oci warm [--root PATH] IMAGE...
 ```
 
 `swe-cache git clone` streams Git's progress while it creates a mirror or
