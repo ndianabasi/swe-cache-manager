@@ -169,9 +169,6 @@ func startCache(t *testing.T, upstream string, tlsVerify bool, certificates *tls
 	if image == "" {
 		image = config.DefaultImage
 	}
-	if err := exec.Command("docker", "image", "inspect", image).Run(); err != nil {
-		t.Skipf("build %s first or set %s: %v", image, e2eImageEnv, err)
-	}
 	c := config.Defaults()
 	c.Root = t.TempDir()
 	c.Image = image

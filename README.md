@@ -41,6 +41,9 @@ Docker (for example, through Docker's `docker` group).
 
 ```sh
 go test ./...
+# The integration suite builds a missing service image and starts isolated
+# containers automatically. Docker and Git are required.
+SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 mkdir -p bin
 go build -o ./bin/swe-cache ./cmd/swe-cache
 
@@ -65,6 +68,9 @@ Macs.
 
 ```sh
 go test ./...
+# The integration suite builds a missing service image and starts isolated
+# containers automatically. Docker and Git are required.
+SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 mkdir -p bin
 go build -o ./bin/swe-cache ./cmd/swe-cache
 
@@ -88,6 +94,10 @@ repository root:
 
 ```powershell
 go test ./...
+# The integration suite builds a missing service image and starts isolated
+# containers automatically. Docker and Git are required.
+$env:SWE_CACHE_E2E = "1"
+go test -tags=integration ./e2e -v
 New-Item -ItemType Directory -Force .\bin | Out-Null
 go build -o .\bin\swe-cache.exe .\cmd\swe-cache
 
@@ -277,15 +287,17 @@ unavailable:
 - Git creates a bare mirror from a local `git daemon`, then clones again after
   that daemon is stopped.
 
-Initialize once to build the version-matched service image, then run:
+Run the suite with:
 
 ```sh
-swe-cache init
 SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
 ```
 
-Set `SWE_CACHE_E2E_IMAGE` if the service image uses a different reference.
-The suite needs Docker, Git, and an available local port range `18001–23999`.
+The suite builds the requested service image if it is missing, starts isolated
+containers for the APT and OCI cases, and removes those containers afterwards;
+it does not use or alter the regular `swe-cache-services` container. Set
+`SWE_CACHE_E2E_IMAGE` if the service image uses a different reference. The
+suite needs Docker, Git, and an available local port range `18001–23999`.
 
 ## Normal use
 
