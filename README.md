@@ -292,6 +292,7 @@ suite needs Docker, Git, and an available local port range `18001–23999`.
 ## Normal use
 
 ```text
+swe-cache --readme
 swe-cache start [--root PATH] [--apt-port PORT] [--oci-port PORT]
 swe-cache stop [--root PATH]
 swe-cache restart [--root PATH] [--apt-port PORT] [--oci-port PORT]

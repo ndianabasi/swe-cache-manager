@@ -18,27 +18,65 @@ import (
 const Version = "0.1.0"
 
 func Run(args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	return RunWithReadme(args, out, errOut, "")
+}
+
+// RunWithReadme handles a command and supplies the documentation embedded by
+// the executable's top-level package. Keeping the CLI package independent of
+// the repository root makes its command parsing directly testable.
+func RunWithReadme(args []string, out, errOut io.Writer, readme string) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		usage(out)
 		return 0
+	}
+	if args[0] == "--readme" {
+		if len(args) != 1 {
+			fmt.Fprintln(errOut, "--readme cannot be combined with a command")
+			return 2
+		}
+		fmt.Fprint(out, readme)
+		return 0
+	}
+	if args[0] == "help" {
+		if len(args) == 1 {
+			usage(out)
+			return 0
+		}
+		return commandUsage(args[1:], out, errOut)
 	}
 	if args[0] == "version" || args[0] == "--version" {
 		fmt.Fprintf(out, "swe-cache %s\n", Version)
 		return 0
 	}
 	if args[0] == "init" {
+		if asksForHelp(args[1:]) {
+			initUsage(out)
+			return 0
+		}
 		return initConfig(args[1:], out, errOut)
 	}
 	if args[0] == "start" || args[0] == "stop" || args[0] == "restart" {
+		if asksForHelp(args[1:]) {
+			lifecycleUsage(args[0], out)
+			return 0
+		}
 		return lifecycle(args[0], args[1:], out, errOut)
 	}
 	if args[0] == "git" {
 		return gitCommand(args[1:], out, errOut)
 	}
 	if args[0] == "status" || args[0] == "doctor" || args[0] == "stats" {
+		if asksForHelp(args[1:]) {
+			inspectUsage(args[0], out)
+			return 0
+		}
 		return inspectCommand(args[0], args[1:], out, errOut)
 	}
 	if args[0] == "gc" {
+		if asksForHelp(args[1:]) {
+			gcUsage(out)
+			return 0
+		}
 		return gcCommand(args[1:], out, errOut)
 	}
 	if isKnown(args[0]) {
@@ -128,8 +166,12 @@ func gcCommand(args []string, out, errOut io.Writer) int {
 }
 
 func gitCommand(args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] != "clone" {
-		fmt.Fprintln(errOut, "usage: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION")
+	if len(args) == 0 || asksForHelp(args) || (args[0] == "clone" && asksForHelp(args[1:])) {
+		gitCloneUsage(out)
+		return 0
+	}
+	if args[0] != "clone" {
+		fmt.Fprintln(errOut, "unknown git command; use: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION")
 		return 2
 	}
 	args = args[1:]
@@ -339,6 +381,11 @@ func isKnown(command string) bool {
 func usage(out io.Writer) {
 	fmt.Fprint(out, `Usage: swe-cache <command> [options]
 
+Global options:
+  -h, --help                          show this help or command-specific help
+  --readme                            print the embedded README
+  --version                           print the binary version
+
 Commands:
   init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT]
                                       create persistent layout and config
@@ -348,6 +395,111 @@ Commands:
   status | doctor | stats            inspect cache health and use
   gc [apt|oci|git|--all]             perform safe maintenance
   git clone [--commit SHA] URL DIR   clone through a host-side bare mirror
-  version                            print the binary version
+
+Examples:
+  swe-cache init --root /srv/swe-cache --oci-port 5500
+  swe-cache start
+  swe-cache status
+  swe-cache git clone --commit 0123abcd https://github.com/acme/project.git ./project
+
+Run "swe-cache <command> --help" for command options and examples.
+`)
+}
+
+func asksForHelp(args []string) bool {
+	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h")
+}
+
+func commandUsage(args []string, out, errOut io.Writer) int {
+	switch strings.Join(args, " ") {
+	case "init":
+		initUsage(out)
+	case "start", "stop", "restart":
+		lifecycleUsage(args[0], out)
+	case "status", "doctor", "stats":
+		inspectUsage(args[0], out)
+	case "gc":
+		gcUsage(out)
+	case "git", "git clone":
+		gitCloneUsage(out)
+	default:
+		fmt.Fprintf(errOut, "unknown command for help: %s\n", strings.Join(args, " "))
+		usage(errOut)
+		return 2
+	}
+	return 0
+}
+
+func initUsage(out io.Writer) {
+	fmt.Fprint(out, `Usage: swe-cache init [--root PATH] [--image REF] [--apt-port PORT] [--oci-port PORT]
+
+Creates the persistent cache layout and configuration. If the selected service
+image is not local, init builds it from the build context embedded in this binary.
+
+Examples:
+  swe-cache init
+  swe-cache init --root /srv/swe-cache --apt-port 3142 --oci-port 5500
+  swe-cache init --image registry.example/swe-cache-services:0.1.0
+`)
+}
+
+func lifecycleUsage(command string, out io.Writer) {
+	if command == "stop" {
+		fmt.Fprint(out, `Usage: swe-cache stop [--root PATH]
+
+Stops the disposable service container without deleting persistent cache data.
+
+Example:
+  swe-cache stop --root /srv/swe-cache
+`)
+		return
+	}
+	fmt.Fprintf(out, `Usage: swe-cache %s [--root PATH] [--apt-port PORT] [--oci-port PORT]
+
+Starts or recreates the disposable service container. Explicit port flags are
+saved to the cache configuration for later starts.
+
+Examples:
+  swe-cache %s
+  swe-cache %s --apt-port 3142 --oci-port 5510
+`, command, command, command)
+}
+
+func inspectUsage(command string, out io.Writer) {
+	fmt.Fprintf(out, `Usage: swe-cache %s [--root PATH]
+
+Examples:
+  swe-cache %s
+  swe-cache %s --root /srv/swe-cache
+`, command, command, command)
+}
+
+func gcUsage(out io.Writer) {
+	fmt.Fprint(out, `Usage: swe-cache gc [--root PATH] {apt|oci|git|--all}
+
+Git maintenance repacks mirror objects without pruning them. APT and OCI cache
+retention is managed by their services and is not deleted by this command.
+
+Examples:
+  swe-cache gc git
+  swe-cache gc --root /srv/swe-cache --all
+`)
+}
+
+func gitCloneUsage(out io.Writer) {
+	fmt.Fprint(out, `Usage: swe-cache git clone [--root PATH] [--commit SHA] URL DESTINATION
+
+Creates or reuses a host-side bare mirror, then clones from that mirror. The
+destination receives the original URL as its origin. With --commit, swe-cache
+checks the mirror first and contacts the upstream only if that commit is absent.
+
+Options:
+  --root PATH                         cache root containing Git mirrors
+  --commit SHA                        require and check out a specific commit
+
+Examples:
+  swe-cache git clone https://github.com/acme/project.git ./project
+  swe-cache git clone --commit 0123abcd https://github.com/acme/project.git ./project
+  swe-cache git clone --root /srv/swe-cache git@github.com:acme/project.git ./project
 `)
 }
