@@ -35,7 +35,8 @@ func TestRuntimeZotConfigurationEnablesDigestPreservingDockerHubCache(t *testing
 	extensions := generated["extensions"].(map[string]any)
 	sync := extensions["sync"].(map[string]any)
 	registry := sync["registries"].([]any)[0].(map[string]any)
-	if registry["preserveDigest"] != true || registry["onDemand"] != true {
+	compatibility := generated["compatibility"].(map[string]any)["docker"].(map[string]any)
+	if registry["preserveDigest"] != true || registry["onDemand"] != true || compatibility["v2"] != true {
 		t.Fatalf("unexpected sync config: %#v", registry)
 	}
 }
