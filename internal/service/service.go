@@ -60,6 +60,18 @@ func (m Manager) GenerateRuntimeConfig() error {
 		"storage":         map[string]any{"rootDirectory": "/var/lib/zot", "gc": true, "dedupe": true},
 		"http":            map[string]any{"address": "0.0.0.0", "port": "5000"},
 		"log":             map[string]any{"level": "info"},
+		// Docker Hub is the one registry Docker can transparently use through
+		// its registry-mirrors setting. Other upstreams need explicit
+		// registry-host mapping, so they are intentionally not guessed here.
+		"extensions": map[string]any{"sync": map[string]any{
+			"enable": true,
+			"registries": []map[string]any{{
+				"urls":                  []string{"https://registry-1.docker.io"},
+				"onDemand":              true,
+				"preserveDigest":        true,
+				"manifestCheckInterval": "1h",
+			}},
+		}},
 	}, "", "  ")
 	if err != nil {
 		return err

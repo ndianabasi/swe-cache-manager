@@ -31,6 +31,12 @@ container; deleting the container or Docker's own image store does not delete
 APT, OCI, or Git cache data. `swe-cache git clone --commit <sha> URL DIR`
 checks its local mirror before contacting the upstream repository.
 
+The generated Zot configuration is a pull-through cache for Docker Hub and
+preserves Docker manifest digests. Point Docker's `registry-mirrors` at the
+published OCI endpoint to keep ordinary Docker Hub pulls unchanged. Registries
+such as GHCR and Quay require a per-registry Docker/containerd host mapping;
+the tool intentionally does not rewrite daemon-wide settings automatically.
+
 ## Development
 
 ```sh
