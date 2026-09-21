@@ -36,7 +36,7 @@ func TestRuntimeZotConfigurationEnablesDockerHubPullThroughCache(t *testing.T) {
 	sync := extensions["sync"].(map[string]any)
 	registry := sync["registries"].([]any)[0].(map[string]any)
 	httpConfig := generated["http"].(map[string]any)
-	if registry["onDemand"] != true || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
+	if registry["onDemand"] != true || registry["tlsVerify"] != true || httpConfig["port"] != fmt.Sprint(c.OCI.Port) {
 		t.Fatalf("unexpected sync config: %#v", registry)
 	}
 }

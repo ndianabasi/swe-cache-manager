@@ -34,8 +34,14 @@ type APTConfig struct {
 	Port    int
 }
 type OCIConfig struct {
-	Enabled bool
-	Port    int
+	Enabled   bool
+	Port      int
+	Upstream  string
+	TLSVerify bool
+	// TLSCertDir is an in-container directory containing registry CA material.
+	// Normal public registries leave this empty; integration tests and private
+	// registries can mount certificates beneath the generated Zot config.
+	TLSCertDir string
 }
 type GitConfig struct{ Enabled bool }
 type MaintenanceConfig struct{ Enabled bool }
@@ -49,7 +55,7 @@ func Defaults() Config {
 	if image == "" {
 		image = DefaultImage
 	}
-	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort}, Git: GitConfig{Enabled: true}}
+	return Config{Root: root, Image: image, APT: APTConfig{Enabled: true, Port: DefaultAPTPort}, OCI: OCIConfig{Enabled: true, Port: DefaultOCIPort, Upstream: "https://registry-1.docker.io", TLSVerify: true}, Git: GitConfig{Enabled: true}}
 }
 
 // defaultRoot selects a writable, OS-native location for user installs while
@@ -99,6 +105,9 @@ func (c Config) Validate() error {
 	}
 	if c.Image == "" {
 		return errors.New("service image must not be empty")
+	}
+	if c.OCI.Enabled && c.OCI.Upstream == "" {
+		return errors.New("OCI upstream must not be empty when OCI caching is enabled")
 	}
 	for name, port := range map[string]int{"apt": c.APT.Port, "oci": c.OCI.Port} {
 		if port < 1 || port > 65535 {
@@ -189,6 +198,10 @@ func set(c *Config, section, key, value string) error {
 		return boolValue(&c.OCI.Enabled)
 	case "oci.port":
 		return portValue(&c.OCI.Port)
+	case "oci.upstream":
+		c.OCI.Upstream = value
+	case "oci.tls_verify":
+		return boolValue(&c.OCI.TLSVerify)
 	case "git.enabled":
 		return boolValue(&c.Git.Enabled)
 	case "maintenance.enabled":
@@ -203,6 +216,6 @@ func (c Config) Save() error {
 	if err := c.EnsureLayout(); err != nil {
 		return err
 	}
-	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\n\n[git]\nenabled = %t\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.Git.Enabled, c.Maintenance.Enabled)
+	data := fmt.Sprintf("# Managed by swe-cache. Edit this top-level file; service files are regenerated.\ncache_root = %q\nservice_image = %q\n\n[apt]\nenabled = %t\nport = %d\n\n[oci]\nenabled = %t\nport = %d\nupstream = %q\ntls_verify = %t\n\n[git]\nenabled = %t\n\n[maintenance]\nenabled = %t\n", c.Root, c.Image, c.APT.Enabled, c.APT.Port, c.OCI.Enabled, c.OCI.Port, c.OCI.Upstream, c.OCI.TLSVerify, c.Git.Enabled, c.Maintenance.Enabled)
 	return os.WriteFile(c.Path(), []byte(data), 0640)
 }

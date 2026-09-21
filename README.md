@@ -263,6 +263,28 @@ GOOS=darwin GOARCH=arm64 go build -o dist/swe-cache-darwin-arm64 ./cmd/swe-cache
 GOOS=windows GOARCH=amd64 go build -o dist/swe-cache-windows-amd64.exe ./cmd/swe-cache
 ```
 
+## End-to-end cache tests
+
+The normal Go suite is hermetic and does not require Docker. A separate,
+opt-in integration suite starts isolated cache containers and uses local test
+upstreams only. It proves each warm cache survives its upstream becoming
+unavailable:
+
+- APT serves a cached package payload after the HTTP upstream is disabled.
+- Zot serves a cached OCI manifest and blob after the local TLS registry is
+  disabled.
+- Git creates a bare mirror from a local `git daemon`, then clones again after
+  that daemon is stopped.
+
+Build the version-matched service image first, then run:
+
+```sh
+SWE_CACHE_E2E=1 go test -tags=integration ./e2e -v
+```
+
+Set `SWE_CACHE_E2E_IMAGE` if the service image uses a different reference.
+The suite needs Docker, Git, and an available local port range `18001–23999`.
+
 ## Normal use
 
 ```text

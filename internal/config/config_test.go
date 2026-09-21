@@ -10,6 +10,8 @@ func TestSaveAndLoad(t *testing.T) {
 	c := Defaults()
 	c.Root = t.TempDir()
 	c.APT.Port = 43142
+	c.OCI.Upstream = "https://registry.example.test"
+	c.OCI.TLSVerify = false
 	if err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +19,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Root != c.Root || got.APT.Port != 43142 {
+	if got.Root != c.Root || got.APT.Port != 43142 || got.OCI.Upstream != c.OCI.Upstream || got.OCI.TLSVerify != c.OCI.TLSVerify {
 		t.Fatalf("loaded %#v, want %#v", got, c)
 	}
 	for _, name := range []string{"apt", "zot", "git", "config", "logs"} {

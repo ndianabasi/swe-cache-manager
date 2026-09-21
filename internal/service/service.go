@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ndianabasi/swe-cache-manager/internal/config"
@@ -38,6 +39,9 @@ func (CommandRunner) Run(ctx context.Context, name string, args ...string) (stri
 type Manager struct {
 	Config config.Config
 	Runner Runner
+	// Name is only intended for isolated integration tests. Production callers
+	// use the stable default so normal lifecycle commands remain predictable.
+	Name string
 }
 
 func (m Manager) runner() Runner {
@@ -47,13 +51,28 @@ func (m Manager) runner() Runner {
 	return CommandRunner{}
 }
 
+func (m Manager) containerName() string {
+	if m.Name != "" {
+		return m.Name
+	}
+	return ContainerName
+}
+
 func (m Manager) GenerateRuntimeConfig() error {
 	if err := m.Config.EnsureLayout(); err != nil {
 		return err
 	}
-	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: %d\nForeGround: 1\n", m.Config.APT.Port)
+	apt := fmt.Sprintf("CacheDir: /var/cache/apt-cacher-ng\nLogDir: /var/log/swe-cache\nPort: %d\nAllowUserPorts: 0\nForeGround: 1\n", m.Config.APT.Port)
 	if err := os.WriteFile(filepath.Join(m.Config.APTConfigDir(), "acng.conf"), []byte(apt), 0640); err != nil {
 		return err
+	}
+	registry := map[string]any{
+		"urls":      []string{m.Config.OCI.Upstream},
+		"onDemand":  true,
+		"tlsVerify": m.Config.OCI.TLSVerify,
+	}
+	if m.Config.OCI.TLSCertDir != "" {
+		registry["certDir"] = m.Config.OCI.TLSCertDir
 	}
 	zot, err := json.MarshalIndent(map[string]any{
 		"distSpecVersion": "1.1.0",
@@ -64,11 +83,8 @@ func (m Manager) GenerateRuntimeConfig() error {
 		// its registry-mirrors setting. Other upstreams need explicit
 		// registry-host mapping, so they are intentionally not guessed here.
 		"extensions": map[string]any{"sync": map[string]any{
-			"enable": true,
-			"registries": []map[string]any{{
-				"urls":     []string{"https://registry-1.docker.io"},
-				"onDemand": true,
-			}},
+			"enable":     true,
+			"registries": []map[string]any{registry},
 		}},
 	}, "", "  ")
 	if err != nil {
@@ -117,7 +133,7 @@ func (m Manager) Start(ctx context.Context) error {
 		return nil
 	}
 	if state == "exited" || state == "created" {
-		_, err = r.Run(ctx, "docker", "start", ContainerName)
+		_, err = r.Run(ctx, "docker", "start", m.containerName())
 		return err
 	}
 	if _, err := r.Run(ctx, "docker", "image", "inspect", m.Config.Image); err != nil {
@@ -125,7 +141,10 @@ func (m Manager) Start(ctx context.Context) error {
 			return fmt.Errorf("obtain service image %s: %w", m.Config.Image, pullErr)
 		}
 	}
-	args := []string{"run", "--detach", "--name", ContainerName, "--restart", "unless-stopped", "--label", "io.swe-cache.managed=true"}
+	args := []string{"run", "--detach", "--name", m.containerName(), "--restart", "unless-stopped", "--label", "io.swe-cache.managed=true"}
+	if runtime.GOOS == "linux" {
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+	}
 	if m.Config.APT.Enabled {
 		args = append(args, "--publish", fmt.Sprintf("127.0.0.1:%d:%d", m.Config.APT.Port, m.Config.APT.Port))
 	}
@@ -150,7 +169,7 @@ func (m Manager) Stop(ctx context.Context) error {
 	if err != nil || state == "" || state == "exited" {
 		return err
 	}
-	_, err = m.runner().Run(ctx, "docker", "stop", ContainerName)
+	_, err = m.runner().Run(ctx, "docker", "stop", m.containerName())
 	return err
 }
 
@@ -164,7 +183,7 @@ func (m Manager) Remove(ctx context.Context) error {
 			return err
 		}
 	}
-	_, err = m.runner().Run(ctx, "docker", "rm", ContainerName)
+	_, err = m.runner().Run(ctx, "docker", "rm", m.containerName())
 	return err
 }
 
@@ -176,7 +195,7 @@ func (m Manager) Restart(ctx context.Context) error {
 }
 
 func (m Manager) containerState(ctx context.Context) (string, error) {
-	out, err := m.runner().Run(ctx, "docker", "inspect", "--format", "{{.State.Status}}", ContainerName)
+	out, err := m.runner().Run(ctx, "docker", "inspect", "--format", "{{.State.Status}}", m.containerName())
 	if err != nil {
 		// Docker returns an error for a missing container; other inspection
 		// failures will be caught by the Docker availability check in Start.

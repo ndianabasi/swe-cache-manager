@@ -69,7 +69,7 @@ func splitURL(raw string) (string, string, error) {
 	if err != nil || u.Host == "" || u.Path == "" {
 		return "", "", fmt.Errorf("unsupported repository URL %q", raw)
 	}
-	if u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh" {
+	if u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh" && u.Scheme != "git" {
 		return "", "", fmt.Errorf("unsupported repository URL scheme %q", u.Scheme)
 	}
 	return u.Hostname(), strings.TrimPrefix(u.EscapedPath(), "/"), nil
@@ -86,14 +86,14 @@ func (m Manager) Clone(ctx context.Context, repository, destination, commit stri
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(mirror), 0750); err != nil {
+		return fmt.Errorf("create mirror parent: %w", err)
+	}
 	unlock, err := acquireLock(mirror+".lock", m.lockWait())
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if err := os.MkdirAll(filepath.Dir(mirror), 0750); err != nil {
-		return fmt.Errorf("create mirror parent: %w", err)
-	}
 	if _, err := os.Stat(mirror); errors.Is(err, os.ErrNotExist) {
 		if err := m.createMirror(ctx, repository, mirror); err != nil {
 			return err
